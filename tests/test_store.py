@@ -19,7 +19,7 @@ class DurableQueueTests(unittest.TestCase):
         result={'id':str(ident),'text':'회의 시작','start':0,'end':8000,'speaker':'unknown'}
         store.complete(ident,result);store.recover()
         self.assertIsNone(store.claim());self.assertEqual(store.results(),[result]);store.close()
-    def test_wav_written_before_queue_commit_is_recovered(self):
+    def test_pcm_written_before_queue_commit_is_recovered(self):
         cap=Capture(self.root,lambda _:None)
         cap.write_chunk(bytes(16000*2),0)
         store=Store(self.root);store.recover();store.recover()
@@ -51,9 +51,10 @@ class DurableQueueTests(unittest.TestCase):
         events=[];cap=Capture(self.root,events.append,rate=16000,seconds=2)
         cap.blocks.put(bytes(64000));cap.blocks.put(bytes(3200));cap.stop_event.set();cap.write_loop()
         self.assertEqual(len(events),2);self.assertEqual(events[-1]['end'],2100)
-        for item in events:
-            with wave.open(str(self.root/item['path'])) as audio:
-                self.assertEqual(audio.getnchannels(),1);self.assertEqual(audio.getframerate(),16000)
-        self.assertFalse(list(self.root.glob('*.part')))
+        for item in events:self.assertEqual((self.root/item['path']).suffix,'.pcm')
+        with wave.open(str(self.root/'recording.wav')) as audio:
+            self.assertEqual(audio.getnchannels(),1);self.assertEqual(audio.getframerate(),16000);self.assertEqual(audio.getnframes(),33600)
+        self.assertEqual(len(list(self.root.rglob('*.wav'))),1)
+        self.assertFalse(list(self.root.rglob('*.part')))
 
 if __name__=='__main__': unittest.main()

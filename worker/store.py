@@ -1,5 +1,7 @@
 """Durable disk queue; PCM is never stored in the job table or IPC."""
 import json
+import os
+import wave
 import sqlite3
 import time
 from pathlib import Path
@@ -18,9 +20,47 @@ class Store:
         self.db.execute("UPDATE chunks SET state='pending' WHERE state='running'")
         self.db.commit()
         # A crash between WAV rename and SQL insert must not lose its audio.
-        for path in sorted(self.root.glob('audio-*-*.wav')):
+        for path in sorted([*self.root.glob('audio-*-*.wav'),*self.root.glob('queue/audio-*-*.pcm')]):
             _, start, end = path.stem.split('-')
-            self.add(path.name, int(start), int(end))
+            relative=str(path.relative_to(self.root));start=int(start);end=int(end)
+            known=self.db.execute('SELECT id,path FROM chunks WHERE start=? AND end=? ORDER BY id LIMIT 1',(start,end)).fetchone()
+            if known:
+                if not (self.root/known[1]).exists():self.db.execute('UPDATE chunks SET path=? WHERE id=?',(relative,known[0]));self.db.commit()
+            else:self.add(relative,start,end)
+        recording=self.root/'recording.wav'
+        if recording.exists():
+            from recording import repair_header
+            repair_header(recording)
+            with wave.open(str(recording),'rb') as source:
+                rate=source.getframerate();frames=source.getnframes()
+                def restore(start,end):
+                    lo=round(start*rate/1000);hi=min(frames,round(end*rate/1000))
+                    if hi<=lo:raise ValueError('Recording cannot restore the missing audio interval')
+                    name=f'queue/audio-{round(start):012d}-{round(end):012d}.pcm'
+                    target=self.root/name;target.parent.mkdir(parents=True,exist_ok=True);temp=target.with_suffix('.pcm.part')
+                    source.setpos(lo)
+                    with open(temp,'wb') as out:
+                        remaining=hi-lo
+                        while remaining:
+                            data=source.readframes(min(16384,remaining))
+                            if not data:raise ValueError('Incomplete full recording')
+                            out.write(data);remaining-=len(data)//2
+                        out.flush();os.fsync(out.fileno())
+                    os.replace(temp,target);return name
+                end_frame=0
+                for ident,path,start,end,*_ in self.rows():
+                    chunk=self.root/path
+                    if not chunk.exists():
+                        if round(end*rate/1000)>frames+8:raise ValueError('Full recording is shorter than the missing queue interval')
+                        path=restore(start,end);self.db.execute('UPDATE chunks SET path=? WHERE id=?',(path,ident));self.db.commit();chunk=self.root/path
+                    if chunk.suffix=='.pcm':count=chunk.stat().st_size//2
+                    else:
+                        with wave.open(str(chunk),'rb') as old:count=old.getnframes()
+                    end_frame=max(end_frame,round(start*rate/1000)+count)
+                # The full WAV may hold a tail that had not reached a queue chunk at interruption.
+                if frames>end_frame+8:
+                    start=round(end_frame*1000/rate);end=round(frames*1000/rate)
+                    self.add(restore(start,end),start,end)
 
     def add(self, path, start, end):
         self.db.execute('INSERT OR IGNORE INTO chunks(path,start,end) VALUES(?,?,?)',(path,start,end))

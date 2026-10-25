@@ -39,6 +39,9 @@ def run(args):
         raise ValueError('로컬 MLX 모델 폴더와 config.json이 필요합니다. 원격 모델 ID는 사용할 수 없습니다.')
     store=Store(args.session)
     store.recover()
+    if args.resume and store.rows():
+        from recording import ensure_recording
+        ensure_recording(store.root)
     inbox=queue.Queue()
     audio=queue.Queue()  # Paths and timing only, never PCM
     cap=Capture(store.root,audio.put,device=args.device,seconds=args.chunk_seconds)
@@ -97,7 +100,8 @@ def run(args):
                             segments.append({'id':f'{ident}_{i}','start':round(a*1000),'end':round(b*1000),'text':result.text.strip(),'speaker':speaker})
                     else:
                         with contextlib.redirect_stdout(sys.stderr):
-                            result=session.transcribe(str(store.root/path),language='Korean',max_new_tokens=512)
+                            from diarization import read_pcm
+                            result=session.transcribe((read_pcm(store.root/path),16000),language='Korean',max_new_tokens=512)
                         segments=[{'id':str(ident),'start':start,'end':end,'text':result.text.strip(),'speaker':'unknown'}]
                     store.complete(ident,{'segments':segments})
                     for segment in segments:

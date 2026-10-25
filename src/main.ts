@@ -1,21 +1,27 @@
-import {App,FileSystemAdapter,ItemView,Notice,Plugin,PluginSettingTab,Setting,TFile,WorkspaceLeaf,Modal,normalizePath,setIcon} from 'obsidian';
+import {App,MarkdownView,FileSystemAdapter,ItemView,Notice,Plugin,PluginSettingTab,Setting,TFile,WorkspaceLeaf,Modal,normalizePath,setIcon,editorInfoField} from 'obsidian';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {existsSync} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {mkdir,writeFile,readFile,rename} from 'node:fs/promises';
-import {Meeting,patchSegment,WorkerEvent,rebaseAnchors,migrateMeeting,speakerName,timestamp} from './model';
+import {Meeting,WorkerEvent,rebaseAnchors,migrateMeeting,speakerName,timestamp} from './model';
 import {WorkerBridge} from './bridge';
 import {CalendarModal,TaskModal} from './calendar';
+import {MeetingEditors} from './editor-sync';
+import {textChange,transcriptChanges} from './editor-changes';
+import {ChangeSet} from '@codemirror/state';
 import {attachOverlayDrag,OverlayPosition} from './overlay';
 
-interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;overlayPosition:OverlayPosition|null;}
-const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:'',overlayPosition:null};
+interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;overlayPosition:OverlayPosition|null;paragraphPauseSeconds:number;}
+const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:'',overlayPosition:null,paragraphPauseSeconds:2.5};
 const VIEW='local-meeting-controls';
 export default class LocalMeeting extends Plugin {
   settings:Settings={...DEFAULT};
   meeting?:Meeting;
   bridge?:WorkerBridge;
-  state='대기'; pending=0; lag=0; error='';
+  state='대기'; pending=0; lag=0; error='';typingPaused=false;
+  private editors!:MeetingEditors;
   private writes:Promise<unknown>=Promise.resolve();
   private status!:HTMLElement;
   private closing=false;
@@ -28,6 +34,9 @@ export default class LocalMeeting extends Plugin {
   private persistTimer?:number;
   async onload(){
     this.settings=Object.assign({},DEFAULT,await this.loadData());
+    if(![2,2.5,3].includes(this.settings.paragraphPauseSeconds))this.settings.paragraphPauseSeconds=2.5;
+    this.editors=new MeetingEditors(view=>view.state.field(editorInfoField,false)?.file?.path,paused=>{this.typingPaused=paused;this.refresh();});
+    this.registerEditorExtension(this.editors.extension);
     this.registerView(VIEW,leaf=>new MeetingView(leaf,this));
     this.registerObsidianProtocolHandler('local-meeting',params=>{
       void this.guard(async()=>{
@@ -49,7 +58,7 @@ export default class LocalMeeting extends Plugin {
     });
     this.addSettingTab(new MeetingSettings(this.app,this));
     this.registerEvent(this.app.workspace.on('active-leaf-change',()=>this.refresh()));
-    this.app.workspace.onLayoutReady(()=>{void this.guard(()=>this.migrateCurrentNote());});
+    this.app.workspace.onLayoutReady(()=>{this.writes=this.writes.then(()=>this.migrateCurrentNote()).catch(error=>this.showError(String(error)));});
     this.status=this.addStatusBarItem();this.createOverlay();this.refresh();
     this.registerEvent(this.app.workspace.on('editor-change',(editor,info)=>{
       const meeting=this.meeting;if(!meeting||info.file?.path!==meeting.note)return;
@@ -63,6 +72,7 @@ export default class LocalMeeting extends Plugin {
     this.addCommand({id:'task',name:'현재 노트에 할 일 추가',callback:()=>new TaskModal(this.app).open()});
     this.addCommand({id:'start',name:'현재 노트에서 회의 녹음 시작',callback:()=>{void this.guard(()=>this.start());}});
     this.addCommand({id:'stop',name:'녹음 중지 및 남은 전사 처리',callback:()=>this.stop()});
+    this.addCommand({id:'recordings',name:'현재 회의 녹음 파일 보기',callback:()=>{void this.guard(()=>this.openRecordingFolder());}});
     this.addCommand({id:'recover',name:'마지막 세션 복구 및 전사 재시도',callback:()=>{void this.guard(()=>this.recover());}});
     this.addCommand({id:'test-audio',name:'테스트 WAV를 현재 노트에 전사',callback:()=>{void this.guard(()=>this.start(this.settings.testAudio));}});
     this.addCommand({id:'controls',name:'상세 보기 / 최소화',hotkeys:[{modifiers:['Mod','Alt'],key:'M'}],callback:()=>{void this.toggleControls();}});
@@ -74,7 +84,7 @@ export default class LocalMeeting extends Plugin {
     this.overlay?.toggleClass('is-running',!!this.bridge&&!this.closing);this.overlay?.toggleClass('is-processing',!!this.bridge&&this.closing);this.overlay?.toggleClass('has-error',!!this.error);
     this.overlayButton?.setAttribute('aria-label',`로컬 회의록: ${this.state}. 대기 ${this.pending}개. 클릭하면 제어 메뉴를 엽니다.`);
     this.overlayButton?.setAttribute('title',`${this.state} · 대기 ${this.pending}개\n드래그하여 이동 · 클릭하여 메뉴 · ⌘⇧M 시작/중지`);
-    this.overlayState?.setText(this.bridge?(this.closing?'처리 중':this.state.includes('녹음')?'녹음 중':'작동 중'):(this.error?'확인 필요':'대기'));
+    this.overlayState?.setText(this.typingPaused?'입력 대기':this.bridge?(this.closing?'처리 중':this.state.includes('녹음')?'녹음 중':'작동 중'):(this.error?'확인 필요':'대기'));
     for(const leaf of this.app.workspace.getLeavesOfType(VIEW)) if(leaf.view instanceof MeetingView) leaf.view.render(force);
   }
   async openControls(){let leaf=this.app.workspace.getLeavesOfType(VIEW)[0];if(!leaf){leaf=this.app.workspace.getRightLeaf(false)??undefined;await leaf?.setViewState({type:VIEW,active:true});}if(leaf)await this.app.workspace.revealLeaf(leaf);}
@@ -96,11 +106,29 @@ export default class LocalMeeting extends Plugin {
   toggleRecording(){if(this.bridge)this.stop();else void this.guard(()=>this.start());}
   async toggleControls(){const leaves=this.app.workspace.getLeavesOfType(VIEW);if(leaves.length)for(const leaf of leaves)leaf.detach();else await this.openControls();}
   openCalendar(){const adapter=this.app.vault.adapter as FileSystemAdapter;new CalendarModal(this.app,{helper:join(adapter.getBasePath(),this.manifest.dir!,'native/calendar-bridge'),calendarId:this.settings.calendarId,saveCalendar:async id=>{this.settings.calendarId=id;await this.saveData(this.settings);}}).open();}
+  async openRecordingFolder(){
+    const path=this.meeting?.directory;if(!path||!path.startsWith(this.root()+'/'))throw new Error('저장된 회의 녹음이 없습니다.');
+    const recording=join(path,'recording.wav');
+    if(!existsSync(recording)){
+      if(this.bridge)throw new Error('녹음 파일을 준비 중입니다. 잠시 후 다시 열어 주세요.');
+      const adapter=this.app.vault.adapter as FileSystemAdapter;
+      new Notice('이전 회의의 전체 녹음 파일을 준비합니다.');
+      await promisify(execFile)(this.settings.python,[join(adapter.getBasePath(),this.manifest.dir!,'worker/recording.py'),'--session',path],{timeout:90000,maxBuffer:65536});
+    }
+    const shell=require('electron').shell as {showItemInFolder:(path:string)=>void};shell.showItemInFolder(recording);
+  }
+
   async toggleTime(){this.settings.showTime=!this.settings.showTime;await this.saveData(this.settings);this.writes=this.writes.then(async()=>{if(this.meeting)await this.renderSegments(this.meeting.segments.map(s=>s.id),'time');this.refresh(true);});await this.writes;new Notice(this.settings.showTime?'시간 표시 켬':'시간 표시 끔');}
   async migrateCurrentNote(){
     if(!this.meeting&&this.settings.lastSession){try{this.meeting=JSON.parse(await readFile(join(this.settings.lastSession,'meeting.json'),'utf8'));}catch{}}
     const meeting=this.meeting;if(!meeting)return;const file=this.app.vault.getAbstractFileByPath(meeting.note);if(!(file instanceof TFile))return;
-    await this.app.vault.process(file,text=>migrateMeeting(text,meeting));await this.saveMeeting();this.refresh();
+    if(!await this.editors.ready(meeting.note))return;
+    const disk=await this.app.vault.read(file),view=this.editors.find(meeting.note);
+    // A just-created editor may still be loading; an unsaved buffer must also win.
+    if(view&&view.state.doc.toString()!==disk){this.refresh();return;}
+    if(view){const before=view.state.doc.toString(),next=migrateMeeting(before,meeting),change=textChange(before,next);if(change)this.editors.apply(view,ChangeSet.of(change,before.length));}
+    else await this.app.vault.process(file,text=>migrateMeeting(text,meeting));
+    await this.renderSegments(meeting.segments.map(s=>s.id));this.refresh();
   }
   private root():string {
     if(!this.settings.storage || !isAbsolute(this.settings.storage)) throw new Error('설정에서 Vault 외부의 절대 저장 경로를 지정하세요.');
@@ -127,7 +155,7 @@ export default class LocalMeeting extends Plugin {
     if(!(note instanceof TFile)||note.extension!=='md') throw new Error('회의를 기록할 Markdown 노트를 먼저 여세요.');
     const id=randomUUID(); const directory=join(this.root(),id);
     await mkdir(directory,{recursive:true});
-    this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{}};
+    this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000};
     await this.saveMeeting();
     this.settings.lastSession=directory; await this.saveData(this.settings);
     this.meeting.noteSnapshot=await this.app.vault.read(note);
@@ -177,16 +205,28 @@ export default class LocalMeeting extends Plugin {
     }
     this.refresh();
   }
-  private async saveMeeting(){if(this.meeting){const file=join(this.meeting.directory,'meeting.json');await writeFile(file+'.tmp',JSON.stringify(this.meeting,null,2));await rename(file+'.tmp',file);}}
+  private async saveMeeting(){
+    const meeting=this.meeting;if(!meeting)return;
+    if(!await this.editors.ready(meeting.note))return;
+    const cm=this.editors.find(meeting.note),info=cm?.state.field(editorInfoField,false);
+    const editorView=this.app.workspace.getLeavesOfType('markdown').map(leaf=>leaf.view).find(view=>view instanceof MarkdownView&&view.file?.path===meeting.note&&view.editor===info?.editor);
+    // Persist the editor before its matching metadata, without reading/writing a stale disk copy.
+    const snapshot=JSON.stringify(meeting,null,2);
+    if(editorView instanceof MarkdownView)await editorView.save();
+    const file=join(meeting.directory,'meeting.json');await writeFile(file+'.tmp',snapshot);await rename(file+'.tmp',file);
+  }
   private async renderSegments(ids:string[],mode:'normal'|'time'|'speaker'='normal'){
     const meeting=this.meeting;if(!meeting)return;
     const file=this.app.vault.getAbstractFileByPath(normalizePath(meeting.note));
     if(!(file instanceof TFile))throw new Error('회의 대상 노트를 찾을 수 없습니다. 원본 오디오는 저장됩니다.');
-    const old={...meeting.rendered};const oldAnchors=structuredClone(meeting.anchors);const oldSnapshot=meeting.noteSnapshot;
+    if(!await this.editors.ready(meeting.note))return;
+    const old={...meeting.rendered};const oldAnchors=structuredClone(meeting.anchors);const oldSnapshot=meeting.noteSnapshot;let committed=false;
     try {
-      await this.app.vault.process(file,text=>{for(const id of ids){const segment=meeting.segments.find(s=>s.id===id);if(segment)text=patchSegment(text,meeting,segment,this.settings.showTime,mode);}return text;});
-      await this.saveMeeting();
-    }catch(error){meeting.rendered=old;meeting.anchors=oldAnchors;meeting.noteSnapshot=oldSnapshot;throw error;}
+      const view=this.editors.find(meeting.note);
+      if(view){const plan=transcriptChanges(view.state.doc.toString(),meeting,ids,this.settings.showTime,mode,true);this.editors.apply(view,plan.changes);}
+      else {let opened=false;await this.app.vault.process(file,text=>{if(this.editors.find(meeting.note)){opened=true;return text;}return transcriptChanges(text,meeting,ids,this.settings.showTime,mode).text;});if(opened){await this.renderSegments(ids,mode);return;}}
+      committed=true;await this.saveMeeting();
+    }catch(error){if(!committed){meeting.rendered=old;meeting.anchors=oldAnchors;meeting.noteSnapshot=oldSnapshot;}throw error;}
     this.refresh();
   }
   updateSpeaker(id:string,name:string){
@@ -196,7 +236,7 @@ export default class LocalMeeting extends Plugin {
     this.writes=this.writes.then(async()=>{const s=this.meeting?.segments.find(s=>s.id===segmentId);if(!s)return;s.speaker=speaker.trim()||'unknown';s.speakerLocked=true;await this.renderSegments([s.id],'speaker');this.refresh(true);}).catch(error=>this.showError(String(error)));
   }
   stop(){if(this.bridge&&!this.closing){this.closing=true;this.state='녹음 종료 요청 / 남은 전사 처리';this.bridge.stop();this.refresh();}}
-  onunload(){window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.overlay?.remove();}
+  onunload(){this.editors?.dispose();window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.overlay?.remove();}
 }
 function participantLabel(id:string,meeting:Meeting){return speakerName({id:'',speaker:id,text:'',start:0,end:0},meeting.speakers);}
 class ParticipantModal extends Modal {
@@ -204,7 +244,7 @@ class ParticipantModal extends Modal {
   onOpen(){this.setTitle('참여자 추가');this.modalEl.addClass('lm-editor-modal');const form=this.contentEl.createEl('form');const label=form.createEl('label',{cls:'lm-form-field'});label.createSpan({text:'참여자 이름'});const input=label.createEl('input',{type:'text',attr:{placeholder:'예: 김민수',maxlength:'60'}});form.createEl('p',{text:'참여자를 추가한 뒤 발언의 화자를 이 이름으로 변경할 수 있습니다.',cls:'lm-hint'});const error=form.createDiv({cls:'lm-form-error',attr:{role:'alert'}});const actions=form.createDiv({cls:'lm-form-actions'});actions.createEl('button',{type:'submit',text:'참여자 추가',cls:'mod-cta'});form.addEventListener('submit',event=>{event.preventDefault();if(!input.value.trim()){error.setText('이름을 입력해 주세요.');input.focus();return;}const id='manual_'+randomUUID();this.plugin.updateSpeaker(id,input.value);this.onAdded?.(id);this.close();});window.setTimeout(()=>{if(input.isConnected)input.focus();},0);}
 }
 class MeetingView extends ItemView {
-  private fingerprint='';private stateEl?:HTMLElement;private queueEl?:HTMLElement;private lagEl?:HTMLElement;private recordEl?:HTMLButtonElement;private recordIcon?:HTMLElement;private recordLabel?:HTMLElement;
+  private fingerprint='';private stateEl?:HTMLElement;private queueEl?:HTMLElement;private lagEl?:HTMLElement;private editingHint?:HTMLElement;private recordEl?:HTMLButtonElement;private recordIcon?:HTMLElement;private recordLabel?:HTMLElement;
   constructor(leaf:WorkspaceLeaf,private plugin:LocalMeeting){super(leaf);}
   getViewType(){return VIEW;}
   getDisplayText(){return '로컬 회의록';}
@@ -213,6 +253,7 @@ class MeetingView extends ItemView {
   render(force=false){
     const p=this.plugin,meeting=p.meeting,active=p.app.workspace.getActiveFile(),ready=active instanceof TFile&&active.extension==='md';
     if(this.recordEl){const key=p.isStopping?'stopping':p.bridge?'recording':'idle';if(this.recordEl.dataset.state!==key){this.recordEl.dataset.state=key;setIcon(this.recordIcon!,p.bridge?'square':'mic');this.recordLabel!.setText(p.isStopping?'남은 발언 처리 중…':p.bridge?'녹음 종료':'현재 노트에 녹음 시작');this.recordEl.toggleClass('mod-cta',!p.bridge);}this.recordEl.disabled=p.isStopping||(!p.bridge&&!ready);}
+    this.editingHint?.setText(p.typingPaused?'한글 조합 중 · 입력이 끝나면 전사를 반영합니다.':'전사 중에도 필기할 수 있습니다. 커서와 직접 수정한 내용은 유지됩니다.');
     this.stateEl?.setText(p.state);this.queueEl?.setText(`${p.pending}개`);this.lagEl?.setText(`${p.lag.toFixed(0)}초`);
     const fingerprint=JSON.stringify([!!p.bridge,p.isStopping,p.error,p.settings.showTime,p.settings.diarModel,p.settings.diarLibrary,active?.path,meeting?.note,meeting?.segments.slice(-20),meeting?.speakers]);
     if(!force&&this.fingerprint===fingerprint)return;
@@ -223,6 +264,7 @@ class MeetingView extends ItemView {
     const status=container.createDiv({cls:'lm-session-state'+(p.bridge?' is-running':'')});status.createSpan({cls:'lm-connection-dot'});this.stateEl=status.createSpan({text:p.state,attr:{role:'status','aria-live':'polite'}});
     const record=container.createEl('button',{cls:'lm-primary-control'+(!p.bridge?' mod-cta':''),attr:{title:'⌘⇧M'}});this.recordEl=record;record.dataset.state=p.isStopping?'stopping':p.bridge?'recording':'idle';this.recordIcon=record.createSpan();setIcon(this.recordIcon,p.bridge?'square':'mic');this.recordLabel=record.createSpan({text:p.isStopping?'남은 발언 처리 중…':p.bridge?'녹음 종료':'현재 노트에 녹음 시작'});record.disabled=p.isStopping||(!p.bridge&&!ready);record.addEventListener('click',()=>p.toggleRecording());
     const target=container.createDiv({cls:'lm-recording-target'});if(p.bridge&&meeting){target.createSpan({text:'기록 중인 노트 · '});const note=target.createEl('button',{text:meeting.note.split('/').pop()?.replace(/\.md$/,'')??meeting.note});note.addEventListener('click',()=>{const f=p.app.vault.getAbstractFileByPath(meeting.note);if(f instanceof TFile)void p.app.workspace.getLeaf(false).openFile(f);});}else target.setText(ready?`시작하면 ‘${active.basename}’에 기록합니다.`:'기록할 Markdown 노트를 먼저 열어 주세요.');
+    this.editingHint=container.createDiv({cls:'lm-hint',attr:{role:'status','aria-live':'polite'}});this.editingHint.setText(p.typingPaused?'한글 조합 중 · 입력이 끝나면 전사를 반영합니다.':'전사 중에도 필기할 수 있습니다. 커서와 직접 수정한 내용은 유지됩니다.');
     const metrics=container.createDiv({cls:'lm-metrics'});const queue=metrics.createDiv({cls:'lm-metric'});this.queueEl=queue.createEl('strong',{text:`${p.pending}개`});queue.createSpan({text:'처리 대기'});const lag=metrics.createDiv({cls:'lm-metric'});this.lagEl=lag.createEl('strong',{text:`${p.lag.toFixed(0)}초`});lag.createSpan({text:'미처리 오디오 범위'});
     if(p.error){const error=container.createDiv({cls:'lm-error',attr:{role:'alert'}});error.setText(p.error);}
     new Setting(container).setName('발언 시간 표시').addToggle(t=>t.setValue(p.settings.showTime).onChange(()=>{void p.guard(()=>p.toggleTime());}));
@@ -236,6 +278,7 @@ class MeetingView extends ItemView {
       const details=container.createEl('details');details.dataset.section='speakers';details.open=folds.get('speakers')??false;details.createEl('summary',{text:`발언별 화자 수정 · 최근 ${Math.min(20,meeting.segments.length)}개`});details.createEl('p',{text:'다르게 구분된 발언의 화자를 선택하면 노트에도 반영됩니다.',cls:'lm-hint'});
       for(const segment of meeting.segments.slice(-20).reverse()){const row=details.createDiv({cls:'lm-utterance'});row.createEl('p',{text:`${p.settings.showTime?timestamp(segment.start)+' · ':''}${participantLabel(segment.speaker,meeting)}: ${segment.text}`});const select=row.createEl('select',{attr:{'aria-label':`발언 화자 변경: ${segment.text.slice(0,35)}`}});for(const id of ['unknown',...ids,'overlap'])select.createEl('option',{value:id,text:participantLabel(id,meeting)});select.createEl('option',{value:'__new__',text:'+ 새 참여자 추가'});select.value=segment.speaker;select.addEventListener('change',()=>{if(select.value==='__new__'){select.value=segment.speaker;new ParticipantModal(this.app,p,id=>p.assignSpeaker(segment.id,id)).open();}else p.assignSpeaker(segment.id,select.value);});}
       if(meeting.note!==active?.path||!p.bridge)container.createEl('p',{text:`최근 세션: ${meeting.note}`,cls:'lm-recording-target'});
+      const audio=container.createEl('button',{text:'녹음 파일 보기',cls:'lm-button-quiet',attr:{title:'회의 전체 recording.wav 파일 보기'}});audio.addEventListener('click',()=>{void p.guard(()=>p.openRecordingFolder());});
     }
     const advanced=container.createEl('details');advanced.dataset.section='advanced';advanced.open=folds.get('advanced')??false;advanced.createEl('summary',{text:'세션 복구 · 단축키'});advanced.createEl('p',{text:'중단된 세션의 저장된 오디오를 다시 처리합니다.',cls:'lm-hint'});const recover=advanced.createEl('button',{text:'마지막 세션 복구'});recover.disabled=!!p.bridge||!p.settings.lastSession;recover.addEventListener('click',()=>{void p.guard(()=>p.recover());});advanced.createEl('p',{text:'⌘⇧M  녹음 시작·종료\n⌘⌥M  상세 보기·최소화\n⌘⌥T  발언 시간 표시\n⌘⌥C  캘린더 열기',cls:'lm-shortcuts',attr:{style:'white-space:pre-line'}});container.scrollTop=scroll;
   }
@@ -244,11 +287,11 @@ class MeetingSettings extends PluginSettingTab {
   constructor(app:App,private plugin:LocalMeeting){super(app,plugin);}
   display(){
     this.containerEl.empty();this.containerEl.createEl('h2',{text:'로컬 회의록 설정'});
-    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'>,string,string][]=[['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
+    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'>,string,string][]=[['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
     this.containerEl.createEl('p',{text:'녹음과 모델 처리는 이 Mac에서 실행합니다. 마이크 입력과 저장 위치를 확인하세요.',cls:'lm-hint'});
     const configured=existsSync(this.plugin.settings.model)&&existsSync(this.plugin.settings.diarModel)&&existsSync(this.plugin.settings.diarLibrary);
     this.containerEl.createEl('p',{text:configured?'STT · 화자 구분 모델 파일이 준비되어 있습니다.':'모델 경로를 확인해 주세요. 아래에서 로컬 파일을 연결할 수 있습니다.',cls:configured?'lm-hint':'lm-error'});
-    const basic=this.containerEl.createDiv();const advanced=this.containerEl.createEl('details');advanced.open=!configured;advanced.createEl('summary',{text:'로컬 모델 · 실행 환경 설정'});
+    const basic=this.containerEl.createDiv();new Setting(basic).setName('같은 화자 문단 나누기').setDesc('말 사이의 빈 구간이 이 시간 이상이면 새 문단으로 기록합니다. 새 회의부터 적용합니다.').addDropdown(d=>d.addOptions({'2':'2초','2.5':'2.5초 (기본)','3':'3초'}).setValue(String(this.plugin.settings.paragraphPauseSeconds)).onChange(async v=>{this.plugin.settings.paragraphPauseSeconds=Number(v);await this.plugin.saveData(this.plugin.settings);}));const advanced=this.containerEl.createEl('details');advanced.open=!configured;advanced.createEl('summary',{text:'로컬 모델 · 실행 환경 설정'});
     for(const [key,name,description] of fields)new Setting(['storage','device'].includes(key)?basic:advanced).setName(name).setDesc(description).addText(t=>t.setValue(this.plugin.settings[key]).onChange(async value=>{this.plugin.settings[key]=value;await this.plugin.saveData(this.plugin.settings);}));
   }
 }

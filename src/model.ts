@@ -1,20 +1,21 @@
+import {textEdits} from './text-edits';
 export interface Segment { id: string; start: number; end: number; text: string; speaker: string; speakerLocked?:boolean; }
-export interface Anchor {from:number;to:number;locked?:boolean;deleted?:boolean;}
-export interface Meeting { id:string;note:string;directory:string;started:string;speakers:Record<string,string>;segments:Segment[];rendered:Record<string,string>;anchors?:Record<string,Anchor>;noteSnapshot?:string; }
+export interface Anchor {from:number;to:number;locked?:boolean;deleted?:boolean;continuation?:boolean;}
+export interface Meeting { id:string;note:string;directory:string;started:string;speakers:Record<string,string>;segments:Segment[];rendered:Record<string,string>;anchors?:Record<string,Anchor>;noteSnapshot?:string;paragraphPauseMs?:number; }
 export function timestamp(ms:number):string {const s=Math.floor(ms/1000);return `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
 const clean=(s:string)=>s.replace(/[\r\n]+/g,' ').replace(/<!--/g,'&lt;!--');
 export function speakerName(segment:Segment,speakers:Record<string,string>):string {return clean(speakers[segment.speaker]??(segment.speaker==='unknown'?'화자 미확정':segment.speaker==='overlap'?'동시 발언':segment.speaker.replace(/^speaker_/, '화자 ')));}
 export function segmentText(segment:Segment,speakers:Record<string,string>,showTime=false):string {return `${showTime?`(${timestamp(segment.start)}) `:''}${speakerName(segment,speakers)}: ${clean(segment.text)}`;}
 export function rebaseAnchors(meeting:Meeting,before:string,after:string){
  if(before===after)return;
- let start=0;while(start<before.length&&start<after.length&&before[start]===after[start])start++;
- let a=before.length,b=after.length;while(a>start&&b>start&&before[a-1]===after[b-1]){a--;b--;}
- const delta=(b-start)-(a-start);
- for(const anchor of Object.values(meeting.anchors??{})){
-  if(anchor.deleted)continue;
-  if(a<=anchor.from && !(a===start&&start===anchor.from&&!after.slice(start,b).includes('\n'))){anchor.from+=delta;anchor.to+=delta;}
-  else if(start>=anchor.to)continue;
-  else {anchor.locked=true;if(start<=anchor.from&&a>=anchor.to){anchor.deleted=true;continue;}anchor.from=Math.min(anchor.from,start);anchor.to=Math.max(anchor.from,anchor.to+delta);}
+ for(const edit of textEdits(before,after).reverse()){
+  const start=edit.from,a=edit.to,delta=edit.insert.length-(a-start);
+  for(const anchor of Object.values(meeting.anchors??{})){
+   if(anchor.deleted)continue;
+   if(a<=anchor.from&&!(a===start&&start===anchor.from&&!edit.insert.includes('\n'))){anchor.from+=delta;anchor.to+=delta;}
+   else if(start>=anchor.to)continue;
+   else{anchor.locked=true;if(start<=anchor.from&&a>=anchor.to){anchor.deleted=true;continue;}anchor.from=Math.min(anchor.from,start);anchor.to=Math.max(anchor.from,anchor.to+delta);}
+  }
  }
  meeting.noteSnapshot=after;
 }
@@ -29,6 +30,7 @@ export function cleanLegacyNote(note:string):string {
 }
 export function migrateMeeting(note:string,meeting:Meeting):string {
  const next=cleanLegacyNote(note);meeting.anchors??={};
+ if(meeting.noteSnapshot!==undefined)rebaseAnchors(meeting,meeting.noteSnapshot,next);
  for(const [id,text] of Object.entries(meeting.rendered)){
   const plain=legacyLine(text);meeting.rendered[id]=plain;
   if(meeting.anchors[id])continue;
@@ -43,24 +45,40 @@ export function patchSegment(note:string,meeting:Meeting,segment:Segment,showTim
  if(meeting.noteSnapshot!==undefined)rebaseAnchors(meeting,meeting.noteSnapshot,note);
  const old=meeting.rendered[segment.id];let anchor=meeting.anchors[segment.id];
  if(!anchor&&old!==undefined){const plain=legacyLine(old);const pos=note.indexOf(plain);if(pos<0||note.indexOf(plain,pos+plain.length)>=0)return note;anchor=meeting.anchors[segment.id]={from:pos,to:pos+plain.length};meeting.rendered[segment.id]=plain;}
- let next=segmentText(segment,meeting.speakers,showTime);
- if(!anchor){const prefix=note.length?(note.endsWith('\n\n')?'':note.endsWith('\n')?'\n':'\n\n'):'';const from=note.length+prefix.length;meeting.anchors[segment.id]={from,to:from+next.length};meeting.rendered[segment.id]=next;const result=note+prefix+next+'\n\n';meeting.noteSnapshot=result;return result;}
+ const index=meeting.segments.findIndex(s=>s.id===segment.id),previous=index>0?meeting.segments[index-1]:undefined;
+ const previousAnchor=previous?meeting.anchors[previous.id]:undefined;
+ const continuous=!!previous&&previous.speaker===segment.speaker&&segment.speaker!=='unknown'&&segment.speaker!=='overlap'&&segment.start>=previous.start&&segment.start-previous.end<(meeting.paragraphPauseMs??2500);
+ const canLink=continuous&&!!previousAnchor&&!previousAnchor.deleted;
+ const body=()=>`${showTime?`(${timestamp(segment.start)}) `:''}${clean(segment.text)}`;
+ const replace=(from:number,to:number,gap:string,content:string,continuation:boolean)=>{
+  const delta=gap.length+content.length-(to-from);
+  for(const [id,other] of Object.entries(meeting.anchors!))if(id!==segment.id&&!other.deleted&&other.from>=to){other.from+=delta;other.to+=delta;}
+  anchor??={from:0,to:0};anchor.from=from+gap.length;anchor.to=anchor.from+content.length;anchor.continuation=continuation;
+  meeting.anchors![segment.id]=anchor;meeting.rendered[segment.id]=content;
+  const result=note.slice(0,from)+gap+content+note.slice(to);meeting.noteSnapshot=result;return result;
+ };
+ if(!anchor){
+  // Join only the exact untouched separator produced by this plugin. User notes stay separate.
+  if(canLink&&!previousAnchor!.locked&&note.slice(previousAnchor!.to)==='\n\n')return replace(previousAnchor!.to,previousAnchor!.to,' ',body(),true);
+  const prefix=note.length?(note.endsWith('\n\n')?'':note.endsWith('\n')?'\n':'\n\n'):'';
+  const result=replace(note.length,note.length,prefix,segmentText(segment,meeting.speakers,showTime),false)+'\n\n';meeting.noteSnapshot=result;return result;
+ }
  if(anchor.deleted)return note;
- const current=note.slice(anchor.from,anchor.to);
+ const current=note.slice(anchor.from,anchor.to),wasInline=!!anchor.continuation;
  if(current!==meeting.rendered[segment.id])anchor.locked=true;
+ if(anchor.locked&&(mode==='normal'||current.includes('\n')))return note;
+ const gap=previousAnchor&&!previousAnchor.deleted?note.slice(previousAnchor.to,anchor.from):undefined;
+ const inline=!!canLink&&(wasInline||(!anchor.locked&&!previousAnchor!.locked&&gap==='\n\n'));
+ let next=inline?body():segmentText(segment,meeting.speakers,showTime);
  if(anchor.locked){
-  if(mode==='normal')return note;
   next=current.replace(/^\(\d\d:\d\d:\d\d\) /,'');
-  if(mode==='speaker'){
-   const previous=(old??'').replace(/^\(\d\d:\d\d:\d\d\) /,'').split(': ')[0];
-   if(previous&&next.startsWith(previous+': '))next=speakerName(segment,meeting.speakers)+next.slice(previous.length);
-  }
+  if(wasInline&&!inline)next=speakerName(segment,meeting.speakers)+': '+next;
+  else if(mode==='speaker'&&!wasInline){const previousName=(old??'').replace(/^\(\d\d:\d\d:\d\d\) /,'').split(': ')[0];if(previousName&&next.startsWith(previousName+': '))next=speakerName(segment,meeting.speakers)+next.slice(previousName.length);}
   if(showTime)next=`(${timestamp(segment.start)}) `+next;
  }
- const start=anchor.from,end=anchor.to,delta=next.length-(end-start);
- for(const other of Object.values(meeting.anchors))if(other!==anchor&&!other.deleted&&other.from>=end){other.from+=delta;other.to+=delta;}
- anchor.to=start+next.length;meeting.rendered[segment.id]=next;
- const result=note.slice(0,start)+next+note.slice(end);meeting.noteSnapshot=result;return result;
+ if(inline&&!wasInline)return replace(previousAnchor!.to,anchor.to,' ',next,true);
+ if(!inline&&wasInline&&gap===' ')return replace(previousAnchor!.to,anchor.to,'\n\n',next,false);
+ return replace(anchor.from,anchor.to,'',next,inline);
 }
 export type WorkerEvent={type:'ready'|'stopped';session:string}|{type:'status';pending:number;lag:number;state:string}|{type:'segment';segment:Segment}|{type:'error';message:string;fatal?:boolean};
 export function parseEvent(line:string):WorkerEvent {

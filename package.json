@@ -1,6 +1,6 @@
 {
   "name": "obsidian-local-meeting",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
@@ -12,6 +12,8 @@
     "esbuild": "^0.25.0",
     "obsidian": "1.14.4",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13"
   }
 }

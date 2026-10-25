@@ -48,6 +48,7 @@ class Diarizer:
 
 def read_pcm(path):
     import wave
+    if Path(path).suffix=='.pcm':return np.frombuffer(Path(path).read_bytes(),dtype=np.int16).astype(np.float32)/32768
     with wave.open(str(path),'rb') as audio:
         if (audio.getframerate(),audio.getnchannels(),audio.getsampwidth())!=(16000,1,2):raise ValueError('PCM16 16kHz mono required')
         return np.frombuffer(audio.readframes(audio.getnframes()),dtype=np.int16).astype(np.float32)/32768
