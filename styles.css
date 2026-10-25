@@ -22,3 +22,92 @@
 
 .lm-overlay.is-dragging .lm-overlay-icon {cursor:grabbing;box-shadow:0 8px 28px #0006;opacity:1;}
 .lm-overlay-menu {max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow-y:auto;}
+
+/* Shared controls follow the active Obsidian theme. */
+.lm-icon-button {display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:6px;flex:none;}
+.lm-icon-button svg {width:17px;height:17px;}
+.lm-button-quiet {box-shadow:none;background:transparent;}
+.lm-form-field {display:flex;flex-direction:column;gap:7px;margin:0 0 16px;font-size:var(--font-ui-small);font-weight:500;min-width:0;}
+.lm-form-field input,.lm-form-field select,.lm-form-field textarea {width:100%;font-weight:400;}
+.lm-form-field input {height:36px;}
+.lm-form-field textarea {resize:vertical;}
+.lm-time-fields {display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.lm-form-actions {display:flex;justify-content:flex-end;gap:8px;margin-top:20px;}
+.lm-form-error {color:var(--text-error);font-size:var(--font-ui-small);white-space:pre-wrap;}
+.lm-form-error:empty {display:none;}
+.lm-empty {display:flex;flex-direction:column;align-items:flex-start;justify-content:center;min-height:160px;padding:24px 16px;gap:8px;}
+.lm-empty strong {font-size:var(--font-ui-small);font-weight:600;}
+.lm-empty p {color:var(--text-muted);font-size:var(--font-ui-small);line-height:1.6;margin:0 0 8px;}
+.lm-calendar-modal {width:min(1020px,94vw);max-width:94vw;}
+.lm-calendar-modal .modal-content {overflow-y:auto;}
+.lm-calendar-source {display:flex;align-items:center;gap:7px;font-size:var(--font-ui-small);color:var(--text-muted);margin:0 0 18px;}
+.lm-connection-dot {width:7px;height:7px;border-radius:50%;background:var(--text-success);flex:none;}
+.lm-calendar-toolbar {display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.lm-calendar-navigation,.lm-calendar-actions {display:flex;align-items:center;gap:6px;min-width:0;}
+.lm-calendar-navigation h3 {font-size:18px;margin:0 4px;white-space:nowrap;}
+.lm-calendar-actions select {max-width:210px;}
+.lm-inline-status {font-size:var(--font-ui-small);color:var(--text-muted);padding:13px 0;min-height:42px;line-height:1.5;}
+.lm-inline-status.is-error {color:var(--text-error);display:flex;align-items:center;gap:12px;}
+.lm-calendar-body {display:grid;grid-template-columns:minmax(0,1.8fr) minmax(235px,1fr);border:1px solid var(--background-modifier-border);border-radius:12px;overflow:hidden;min-height:470px;}
+.lm-month {min-width:0;padding:12px;background:var(--background-primary);}
+.lm-calendar-week {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));}
+.lm-weekdays {text-align:center;color:var(--text-muted);font-size:11px;padding:5px 0 10px;}
+.lm-weekdays span:first-child {color:var(--text-error);}
+.lm-date-cell {min-width:0;}
+.lm-calendar-modal button.lm-date-button {display:flex;flex-direction:column;align-items:stretch;width:100%;min-height:66px;height:100%;padding:6px 4px;border:1px solid transparent;border-radius:8px;box-shadow:none;background:transparent;line-height:1.4;gap:3px;}
+.lm-calendar-modal button.lm-date-button:hover {background:var(--background-modifier-hover);}
+.lm-calendar-modal button.lm-date-button.is-selected {background:var(--background-modifier-active-hover);border-color:var(--interactive-accent);}
+.lm-date-number {display:flex;align-items:center;justify-content:center;align-self:center;width:23px;height:23px;font-size:12px;flex:none;}
+.lm-date-button.is-other-month .lm-date-number {color:var(--text-faint);}
+.lm-date-button.is-today .lm-date-number {color:var(--text-on-accent);background:var(--interactive-accent);border-radius:50%;font-weight:600;}
+.lm-date-events {display:flex;flex-direction:column;gap:3px;min-width:0;text-align:left;}
+.lm-date-event {font-size:10px;color:var(--text-normal);background:var(--background-secondary);border-left:3px solid var(--event-color,var(--text-accent));border-radius:3px;padding:1px 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+.lm-date-more {font-size:10px;color:var(--text-muted);padding-left:3px;}
+.lm-day-agenda {min-width:0;padding:20px 16px;background:var(--background-secondary);border-left:1px solid var(--background-modifier-border);max-height:590px;overflow:auto;}
+.lm-agenda-heading {display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}
+.lm-agenda-heading h3 {font-size:15px;margin:0;}
+.lm-count {font-size:11px;color:var(--text-muted);}
+.lm-agenda-list {display:flex;flex-direction:column;gap:10px;}
+.lm-event-card {display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:6px;width:100%;height:auto;padding:12px;background:var(--background-primary);border:1px solid var(--background-modifier-border);border-left:3px solid var(--event-color,var(--text-accent));border-radius:8px;box-shadow:none;white-space:normal;}
+.lm-event-card:hover {background:var(--background-modifier-hover);}
+.lm-event-card strong {font-size:13px;line-height:1.5;overflow-wrap:anywhere;}
+.lm-event-time {font-size:11px;font-weight:600;color:var(--text-muted);}
+.lm-event-calendar,.lm-event-location {font-size:11px;color:var(--text-muted);}
+.lm-calendar-updated {margin-top:12px;font-size:11px;color:var(--text-faint);text-align:right;}
+.lm-editor-modal {width:520px;max-width:94vw;}
+.lm-detail-time {font-weight:500;}
+.lm-event-notes {white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--font-ui-small);line-height:1.7;}
+.lm-calendar-modal button:focus-visible,.lm-editor-modal button:focus-visible,.lm-panel button:focus-visible {outline:2px solid var(--interactive-accent);outline-offset:2px;}
+/* Compact meeting inspector. */
+.lm-panel {padding:20px 16px!important;}
+.lm-panel-heading {display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:18px;}
+.lm-panel-heading h3 {margin:0;font-size:18px;}
+.lm-session-state {display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin:0 0 12px;}
+.lm-session-state .lm-connection-dot {background:var(--text-faint);}
+.lm-session-state.is-running .lm-connection-dot {background:var(--text-error);}
+.lm-primary-control {width:100%;height:38px;gap:8px;display:flex;align-items:center;justify-content:center;}
+.lm-primary-control svg {width:16px;height:16px;}
+.lm-recording-target {margin:10px 0 14px;color:var(--text-muted);font-size:11px;line-height:1.6;overflow-wrap:anywhere;}
+.lm-recording-target button {font-size:12px;height:auto;box-shadow:none;background:transparent;padding:0;text-decoration:underline;text-underline-offset:3px;color:var(--text-normal);}
+.lm-metrics {display:flex;gap:16px;padding:12px 0;border-top:1px solid var(--background-modifier-border);border-bottom:1px solid var(--background-modifier-border);margin:14px 0;}
+.lm-metric {display:flex;flex-direction:column;gap:4px;flex:1;}
+.lm-metric strong {font-size:16px;}
+.lm-metric span {font-size:10px;color:var(--text-muted);}
+.lm-panel .setting-item {padding:12px 0;flex-wrap:nowrap!important;}
+.lm-panel .setting-item-name {font-size:12px;}
+.lm-panel .setting-item-description {font-size:11px;}
+.lm-panel .setting-item-control {gap:6px;}
+.lm-quick-actions {display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0 22px;}
+.lm-quick-actions button {height:34px;font-size:12px;}
+.lm-section-title {display:flex;align-items:center;justify-content:space-between;margin:22px 0 12px;font-size:13px;font-weight:600;}
+.lm-participant-row {display:flex;align-items:center;gap:8px;margin:8px 0;}
+.lm-participant-label {flex:none;font-size:11px;color:var(--text-muted);width:43px;}
+.lm-participant-row input {min-width:0;flex:1;width:80px;height:34px;font-size:12px;}
+.lm-participant-row button {width:30px;height:30px;}
+.lm-panel details {border-top:1px solid var(--background-modifier-border);margin-top:20px;padding-top:14px;}
+.lm-panel summary {cursor:pointer;font-size:12px;font-weight:500;color:var(--text-muted);padding:4px 0;}
+.lm-utterance {padding:12px 0;border-bottom:1px solid var(--background-modifier-border);}
+.lm-utterance p {font-size:12px;line-height:1.6;margin:0 0 8px;overflow-wrap:anywhere;}
+.lm-utterance select {width:100%;font-size:12px;}
+.lm-shortcuts {font-size:11px;line-height:1.9;color:var(--text-muted);margin-top:12px;}
+@media (max-width:760px) {.lm-calendar-body{grid-template-columns:1fr;}.lm-day-agenda{border-left:0;border-top:1px solid var(--background-modifier-border);max-height:260px;}.lm-calendar-actions{flex-wrap:wrap;}.lm-calendar-actions select{max-width:170px;}.lm-time-fields{grid-template-columns:1fr;gap:0;}.lm-date-button{min-height:60px;}}
