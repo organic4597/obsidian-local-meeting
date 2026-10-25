@@ -5,9 +5,10 @@ import {mkdir,writeFile,readFile,rename} from 'node:fs/promises';
 import {Meeting,patchSegment,WorkerEvent,rebaseAnchors,migrateMeeting} from './model';
 import {WorkerBridge} from './bridge';
 import {CalendarModal} from './calendar';
+import {attachOverlayDrag,OverlayPosition} from './overlay';
 
-interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;}
-const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:''};
+interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;overlayPosition:OverlayPosition|null;}
+const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:'',overlayPosition:null};
 const VIEW='local-meeting-controls';
 export default class LocalMeeting extends Plugin {
   settings:Settings={...DEFAULT};
@@ -21,6 +22,7 @@ export default class LocalMeeting extends Plugin {
   private overlay!:HTMLElement;
   private overlayButton!:HTMLButtonElement;
   private overlayState!:HTMLElement;
+  private overlayDrag?:ReturnType<typeof attachOverlayDrag>;
   private popup!:HTMLElement;
   private persistTimer?:number;
   async onload(){
@@ -68,7 +70,7 @@ export default class LocalMeeting extends Plugin {
     this.status?.setText(`회의: ${this.state} · 대기 ${this.pending} · ${this.lag.toFixed(0)}초`);
     this.overlay?.toggleClass('is-running',!!this.bridge&&!this.closing);this.overlay?.toggleClass('is-processing',!!this.bridge&&this.closing);this.overlay?.toggleClass('has-error',!!this.error);
     this.overlayButton?.setAttribute('aria-label',`로컬 회의록: ${this.state}. 대기 ${this.pending}개. 클릭하면 제어 메뉴를 엽니다.`);
-    this.overlayButton?.setAttribute('title',`${this.state} · 대기 ${this.pending}개 · ⌘⇧M 시작/중지`);
+    this.overlayButton?.setAttribute('title',`${this.state} · 대기 ${this.pending}개\n드래그하여 이동 · 클릭하여 메뉴 · ⌘⇧M 시작/중지`);
     this.overlayState?.setText(this.bridge?(this.closing?'처리 중':this.state.includes('녹음')?'녹음 중':'작동 중'):(this.error?'확인 필요':'대기'));
     for(const leaf of this.app.workspace.getLeavesOfType(VIEW)) if(leaf.view instanceof MeetingView && (force || !leaf.view.contentEl.contains(document.activeElement))) leaf.view.render();
   }
@@ -79,8 +81,11 @@ export default class LocalMeeting extends Plugin {
     this.overlayState=this.overlayButton.createSpan({cls:'lm-overlay-state',text:'대기'});
     this.popup=this.overlay.createDiv({cls:'lm-overlay-menu'});this.popup.hidden=true;
     const action=(label:string,fn:()=>void)=>{this.popup.createEl('button',{text:label}).addEventListener('click',()=>{fn();this.popup.hidden=true;this.overlayButton.setAttribute('aria-expanded','false');});};
+    this.overlayDrag=attachOverlayDrag({overlay:this.overlay,button:this.overlayButton,menu:this.popup,getPosition:()=>this.settings.overlayPosition,savePosition:position=>{this.settings.overlayPosition=position;void this.guard(()=>this.saveData(this.settings));}});
+    this.register(()=>this.overlayDrag?.dispose());
     action('녹음 시작 / 중지  ⌘⇧M',()=>this.toggleRecording());action('상세 보기  ⌘⌥M',()=>{void this.openControls();});action('시간 표시 켜기 / 끄기  ⌘⌥T',()=>{void this.guard(()=>this.toggleTime());});action('캘린더 · 할 일',()=>this.openCalendar());
-    this.overlayButton.addEventListener('click',()=>{this.popup.hidden=!this.popup.hidden;this.overlayButton.setAttribute('aria-expanded',String(!this.popup.hidden));});
+    action('버튼 위치 초기화',()=>{this.settings.overlayPosition=null;this.overlayDrag?.refreshPosition();void this.guard(()=>this.saveData(this.settings));});
+    this.overlayButton.addEventListener('click',()=>{this.popup.hidden=!this.popup.hidden;this.overlayButton.setAttribute('aria-expanded',String(!this.popup.hidden));this.overlayDrag?.layoutMenu();});
     this.registerDomEvent(document,'click',event=>{if(!this.overlay.contains(event.target as Node)){this.popup.hidden=true;this.overlayButton.setAttribute('aria-expanded','false');}});
   }
   toggleRecording(){if(this.bridge)this.stop();else void this.guard(()=>this.start());}
@@ -219,7 +224,7 @@ class MeetingSettings extends PluginSettingTab {
   constructor(app:App,private plugin:LocalMeeting){super(app,plugin);}
   display(){
     this.containerEl.empty();this.containerEl.createEl('h2',{text:'로컬 회의록 설정'});
-    const fields:[Exclude<keyof Settings,'showTime'>,string,string][]=[['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
+    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'>,string,string][]=[['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
     for(const [key,name,description] of fields)new Setting(this.containerEl).setName(name).setDesc(description).addText(t=>t.setValue(this.plugin.settings[key]).onChange(async value=>{this.plugin.settings[key]=value;await this.plugin.saveData(this.plugin.settings);}));
   }
 }

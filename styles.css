@@ -1,8 +1,8 @@
 .lm-error {color:var(--text-error);white-space:pre-wrap;}
 .lm-hint {font-size:var(--font-ui-small);color:var(--text-muted);}
 .workspace-leaf-content[data-type="local-meeting-controls"] .setting-item {flex-wrap:wrap;gap:8px;}
-.lm-overlay {position:fixed;right:20px;top:84px;z-index:1000;}
-.lm-overlay-icon {position:relative;min-width:144px;width:auto;height:44px;padding:0 13px;display:flex;align-items:center;justify-content:center;gap:9px;border-radius:14px;background:color-mix(in srgb,var(--background-primary) 90%,transparent);backdrop-filter:blur(12px);border:1px solid color-mix(in srgb,var(--text-accent) 55%,var(--background-modifier-border));color:var(--text-normal);opacity:1;box-shadow:0 4px 18px #0004,0 0 0 1px color-mix(in srgb,var(--text-accent) 10%,transparent);cursor:pointer;white-space:nowrap;}
+.lm-overlay {-webkit-app-region:no-drag;position:fixed;right:20px;top:144px;z-index:1000;}
+.lm-overlay-icon {position:relative;min-width:144px;width:auto;height:44px;padding:0 13px;display:flex;align-items:center;justify-content:center;gap:9px;border-radius:14px;background:color-mix(in srgb,var(--background-primary) 90%,transparent);backdrop-filter:blur(12px);border:1px solid color-mix(in srgb,var(--text-accent) 55%,var(--background-modifier-border));color:var(--text-normal);opacity:1;box-shadow:0 4px 18px #0004,0 0 0 1px color-mix(in srgb,var(--text-accent) 10%,transparent);cursor:grab;touch-action:none;user-select:none;white-space:nowrap;}
 .lm-overlay-icon > svg {width:21px;height:21px;flex-shrink:0;color:var(--text-accent);}
 .lm-overlay-label {font-size:13px;font-weight:650;letter-spacing:.02em;}
 .lm-overlay-state {font-size:11px;font-weight:600;line-height:1;padding:5px 7px;border-radius:7px;background:var(--background-secondary);color:var(--text-muted);}
@@ -19,3 +19,6 @@
 .lm-overlay-menu[hidden] {display:none;}
 @keyframes lm-pulse {50% {opacity:.35;}}
 @media (prefers-reduced-motion:reduce) {.lm-overlay-icon::after {animation:none!important;}}
+
+.lm-overlay.is-dragging .lm-overlay-icon {cursor:grabbing;box-shadow:0 8px 28px #0006;opacity:1;}
+.lm-overlay-menu {max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow-y:auto;}
