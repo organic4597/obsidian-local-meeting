@@ -17,6 +17,7 @@ export default class LocalMeeting extends Plugin {
   private writes:Promise<unknown>=Promise.resolve();
   private status!:HTMLElement;
   private closing=false;
+  private transitioning=false;
   private overlay!:HTMLElement;
   private overlayButton!:HTMLButtonElement;
   private popup!:HTMLElement;
@@ -103,7 +104,10 @@ export default class LocalMeeting extends Plugin {
     if(!this.settings.diarModel||!this.settings.diarLibrary)throw new Error('설정에서 자동 화자 구분 모델과 네이티브 라이브러리를 연결하세요.');
   }
   async start(inputWav?:string){
-    this.validate();
+    if(this.transitioning)return;
+    this.validate();this.transitioning=true;
+    try {
+    await this.writes;
     if(inputWav!==undefined && !isAbsolute(inputWav))throw new Error('설정에서 테스트 WAV 절대 경로를 지정하세요.');
     const note=this.app.workspace.getActiveFile();
     if(!(note instanceof TFile)||note.extension!=='md') throw new Error('회의를 기록할 Markdown 노트를 먼저 여세요.');
@@ -114,9 +118,13 @@ export default class LocalMeeting extends Plugin {
     this.settings.lastSession=directory; await this.saveData(this.settings);
     this.meeting.noteSnapshot=await this.app.vault.read(note);
     this.launch(false,inputWav);
+    } finally {this.transitioning=false;}
   }
   async recover(){
-    this.validate();
+    if(this.transitioning)return;
+    this.validate();this.transitioning=true;
+    try {
+    await this.writes;
     if(!this.settings.lastSession) throw new Error('복구할 세션이 없습니다.');
     const directory=this.settings.lastSession;
     if(!directory.startsWith(this.root()+'/')) throw new Error('세션 저장 경로가 현재 설정과 다릅니다.');
@@ -124,6 +132,7 @@ export default class LocalMeeting extends Plugin {
     if(!data.id||!data.note||!Array.isArray(data.segments)||data.directory!==directory) throw new Error('잘못된 세션 파일');
     if(!(this.app.vault.getAbstractFileByPath(data.note) instanceof TFile)) throw new Error('원래 회의 노트를 찾을 수 없습니다.');
     this.meeting=data;await this.migrateCurrentNote();this.launch(true);
+    } finally {this.transitioning=false;}
   }
   private launch(resume:boolean,inputWav?:string){
     const meeting=this.meeting!;
