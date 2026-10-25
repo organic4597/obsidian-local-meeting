@@ -20,6 +20,7 @@ export default class LocalMeeting extends Plugin {
   private transitioning=false;
   private overlay!:HTMLElement;
   private overlayButton!:HTMLButtonElement;
+  private overlayState!:HTMLElement;
   private popup!:HTMLElement;
   private persistTimer?:number;
   async onload(){
@@ -68,11 +69,14 @@ export default class LocalMeeting extends Plugin {
     this.overlay?.toggleClass('is-running',!!this.bridge&&!this.closing);this.overlay?.toggleClass('is-processing',!!this.bridge&&this.closing);this.overlay?.toggleClass('has-error',!!this.error);
     this.overlayButton?.setAttribute('aria-label',`로컬 회의록: ${this.state}. 대기 ${this.pending}개. 클릭하면 제어 메뉴를 엽니다.`);
     this.overlayButton?.setAttribute('title',`${this.state} · 대기 ${this.pending}개 · ⌘⇧M 시작/중지`);
+    this.overlayState?.setText(this.bridge?(this.closing?'처리 중':this.state.includes('녹음')?'녹음 중':'작동 중'):(this.error?'확인 필요':'대기'));
     for(const leaf of this.app.workspace.getLeavesOfType(VIEW)) if(leaf.view instanceof MeetingView && (force || !leaf.view.contentEl.contains(document.activeElement))) leaf.view.render();
   }
   async openControls(){let leaf=this.app.workspace.getLeavesOfType(VIEW)[0];if(!leaf){leaf=this.app.workspace.getRightLeaf(false)??undefined;await leaf?.setViewState({type:VIEW,active:true});}if(leaf)await this.app.workspace.revealLeaf(leaf);}
   private createOverlay(){
     this.overlay=document.body.createDiv({cls:'lm-overlay'});this.overlayButton=this.overlay.createEl('button',{cls:'lm-overlay-icon',attr:{'aria-label':'로컬 회의록 제어','aria-expanded':'false'}});setIcon(this.overlayButton,'mic');
+    this.overlayButton.createSpan({cls:'lm-overlay-label',text:'회의록'});
+    this.overlayState=this.overlayButton.createSpan({cls:'lm-overlay-state',text:'대기'});
     this.popup=this.overlay.createDiv({cls:'lm-overlay-menu'});this.popup.hidden=true;
     const action=(label:string,fn:()=>void)=>{this.popup.createEl('button',{text:label}).addEventListener('click',()=>{fn();this.popup.hidden=true;this.overlayButton.setAttribute('aria-expanded','false');});};
     action('녹음 시작 / 중지  ⌘⇧M',()=>this.toggleRecording());action('상세 보기  ⌘⌥M',()=>{void this.openControls();});action('시간 표시 켜기 / 끄기  ⌘⌥T',()=>{void this.guard(()=>this.toggleTime());});action('캘린더 · 할 일',()=>this.openCalendar());
