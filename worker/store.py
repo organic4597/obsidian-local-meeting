@@ -26,6 +26,12 @@ class Store:
         self.db.execute('INSERT OR IGNORE INTO chunks(path,start,end) VALUES(?,?,?)',(path,start,end))
         self.db.commit()
 
+    def rows(self):
+        return self.db.execute('SELECT id,path,start,end,state FROM chunks ORDER BY start,id').fetchall()
+
+    def peek(self):
+        return self.db.execute("SELECT id,path,start,end FROM chunks WHERE state='pending' ORDER BY start,id LIMIT 1").fetchone()
+
     def claim(self):
         with self.db:
             row=self.db.execute("SELECT id,path,start,end FROM chunks WHERE state='pending' ORDER BY start,id LIMIT 1").fetchone()
@@ -46,7 +52,11 @@ class Store:
         self.db.commit()
 
     def results(self):
-        return [json.loads(row[0]) for row in self.db.execute("SELECT result FROM chunks WHERE state='done' ORDER BY start,id")]
+        results=[]
+        for row in self.db.execute("SELECT result FROM chunks WHERE state='done' ORDER BY start,id"):
+            value=json.loads(row[0])
+            results.extend(value.get('segments',[value]))
+        return results
 
     def status(self):
         n,start,end=self.db.execute("SELECT COUNT(*),MIN(start),MAX(end) FROM chunks WHERE state!='done'").fetchone()

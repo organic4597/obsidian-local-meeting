@@ -1,0 +1,26 @@
+{
+  "audio_seconds": 8.3050625,
+  "load_seconds": 0.8581257920004646,
+  "runs": [
+    {
+      "seconds": 2.6566264160001083,
+      "rtf": 0.3198803640550698,
+      "text": "오늘 회의를 시작하겠습니다. 민수 씨는 다음 주 금요일까지 보고서를 작성해 주세요. 다음 회의는 월요일 오후 3시입니다."
+    },
+    {
+      "seconds": 1.30081812500066,
+      "rtf": 0.1566295407169615,
+      "text": "오늘 회의를 시작하겠습니다. 민수 씨는 다음 주 금요일까지 보고서를 작성해 주세요. 다음 회의는 월요일 오후 3시입니다."
+    },
+    {
+      "seconds": 1.3687809169996399,
+      "rtf": 0.1648128375914859,
+      "text": "오늘 회의를 시작하겠습니다. 민수 씨는 다음 주 금요일까지 보고서를 작성해 주세요. 다음 회의는 월요일 오후 3시입니다."
+    }
+  ],
+  "peak_rss_bytes": 2685239296,
+  "metal_peak_bytes": 2814211678,
+  "metal_active_bytes": 2506599498,
+  "metal_cache_bytes": 4,
+  "note": "Peak RSS includes loading. Metal counters are separate views; do not add them to RSS."
+}

@@ -1,3 +1,15 @@
 .lm-error {color:var(--text-error);white-space:pre-wrap;}
 .lm-hint {font-size:var(--font-ui-small);color:var(--text-muted);}
 .workspace-leaf-content[data-type="local-meeting-controls"] .setting-item {flex-wrap:wrap;gap:8px;}
+.lm-overlay {position:fixed;right:20px;top:84px;z-index:1000;}
+.lm-overlay-icon {width:38px;height:38px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:color-mix(in srgb,var(--background-primary) 60%,transparent);backdrop-filter:blur(12px);border:1px solid var(--background-modifier-border);opacity:.62;box-shadow:0 3px 14px #0002;cursor:pointer;}
+.lm-overlay-icon:hover,.lm-overlay-icon:focus-visible {opacity:1;}
+.lm-overlay.is-running .lm-overlay-icon {color:var(--text-error);opacity:.9;}
+.lm-overlay.is-running .lm-overlay-icon::after {content:'';position:absolute;right:0;bottom:0;width:9px;height:9px;border-radius:50%;background:var(--text-error);animation:lm-pulse 1.5s infinite;}
+.lm-overlay.is-processing .lm-overlay-icon {color:var(--text-accent);}
+.lm-overlay.has-error .lm-overlay-icon {outline:2px solid var(--text-error);}
+.lm-overlay-menu {position:absolute;right:0;top:46px;width:260px;padding:8px;border:1px solid var(--background-modifier-border);border-radius:12px;background:var(--background-primary);box-shadow:var(--shadow-l);}
+.lm-overlay-menu button {display:block;width:100%;text-align:left;margin:4px 0;}
+.lm-overlay-menu[hidden] {display:none;}
+@keyframes lm-pulse {50% {opacity:.35;}}
+@media (prefers-reduced-motion:reduce) {.lm-overlay-icon::after {animation:none!important;}}

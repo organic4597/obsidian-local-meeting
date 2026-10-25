@@ -1,32 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {Meeting,patchSegment,parseEvent,Segment} from '../src/model';
-const make=():Meeting=>({id:'meeting-1',note:'meeting.md',directory:'/tmp/example',started:'',speakers:{s1:'영희'},segments:[],rendered:{}});
-const segment:Segment={id:'1',start:61000,end:68000,text:'다음 주에 확인합니다.',speaker:'s1'};
-test('append, replay, and rename do not duplicate transcript',()=>{
- const meeting=make();const original=patchSegment('# 회의\n',meeting,segment);
- assert.match(original,/00:01:01.*영희/);
- assert.equal(patchSegment(original,meeting,segment),original);
- meeting.speakers.s1='철수';const renamed=patchSegment(original,meeting,segment);
- assert.match(renamed,/철수/);assert.equal(renamed.match(/<!-- lm:/g)?.length,1);
-});
-test('speaker rename and re-transcription preserve human changes',()=>{
- const meeting=make();let note=patchSegment('# 회의',meeting,segment);
- note=note.replace('다음 주에 확인합니다.','이번 주에 확인합니다.');
- meeting.speakers.s1='철수';
- assert.equal(patchSegment(note,meeting,{...segment,text:'자동으로 변경한 문장'}),note);
-});
-test('deleted managed text is not resurrected',()=>{
- const meeting=make();patchSegment('',meeting,segment);
- assert.equal(patchSegment('# 사용자 삭제 완료',meeting,segment),'# 사용자 삭제 완료');
-});
-test('marker text in transcription cannot create control blocks',()=>{
- const meeting=make();const note=patchSegment('',meeting,{...segment,text:'<!-- lm:evil -->\n다음 문장'});
- assert.equal(note.match(/<!-- lm:/g)?.length,1);assert.match(note,/&lt;!-- lm:evil/);
-});
-test('reject malformed worker protocol and inverted timestamps',()=>{
- assert.throws(()=>parseEvent('{"type":"segment","segment":{"id":"<!--","text":"x"}}'));
- assert.throws(()=>parseEvent(JSON.stringify({type:'segment',segment:{...segment,end:0}})));
- assert.throws(()=>parseEvent('{"type":"run-shell"}'));
- assert.deepEqual(parseEvent(JSON.stringify({type:'segment',segment})),{type:'segment',segment});
-});
+import {Meeting,patchSegment,parseEvent,Segment,rebaseAnchors,migrateMeeting} from '../src/model';
+const make=():Meeting=>({id:'meeting-1',note:'meeting.md',directory:'/tmp/example',started:'',speakers:{speaker_1:'영희'},segments:[],rendered:{}});
+const segment:Segment={id:'1',start:61000,end:68000,text:'다음 주에 확인합니다.',speaker:'speaker_1'};
+test('plain speaker dialogue; no visible metadata or default timestamp',()=>{const m=make();const note=patchSegment('',m,segment);assert.equal(note,'영희: 다음 주에 확인합니다.\n\n');assert.doesNotMatch(note,/<!--|\*\*|00:01:01/);assert.equal(patchSegment(note,m,segment),note);});
+test('rename updates the original line',()=>{const m=make();let note=patchSegment('# 회의\n',m,segment);m.speakers.speaker_1='철수';note=patchSegment(note,m,segment,false,'speaker');assert.match(note,/철수: 다음 주/);assert.equal(note.split('다음 주').length,2);});
+test('human edits are preserved while timestamps toggle',()=>{const m=make();let note=patchSegment('',m,segment);note=note.replace('다음 주','이번 주');assert.equal(patchSegment(note,m,{...segment,text:'자동 교체'}),note);note=patchSegment(note,m,segment,true,'time');assert.match(note,/\(00:01:01\) 영희: 이번 주/);note=patchSegment(note,m,segment,false,'time');assert.match(note,/^영희: 이번 주/);});
+test('user notes inserted above move anchors without being overwritten',()=>{const m=make();let note=patchSegment('',m,segment);note='직접 필기한 내용\n\n'+note;m.speakers.speaker_1='철수';note=patchSegment(note,m,segment,false,'speaker');assert.match(note,/직접 필기한 내용\n\n철수:/);});
+test('duplicate utterances remain individually addressable',()=>{const m=make();let note=patchSegment('',m,segment);note=patchSegment(note,m,{...segment,id:'2'});m.speakers.speaker_1='철수';note=patchSegment(note,m,{...segment,id:'2'},false,'speaker');assert.match(note,/영희: 다음 주.*\n\n철수: 다음 주/s);});
+test('deleted speech is not resurrected',()=>{const m=make();const before=patchSegment('',m,segment);rebaseAnchors(m,before,'# 삭제 완료');assert.equal(patchSegment('# 삭제 완료',m,segment),'# 삭제 완료');});
+test('legacy comments and formatting are removed; human notes survive',()=>{const m=make();m.rendered['1']='**[00:01:01] 영희**: 다음 주에 확인합니다.';const old='## 회의 기록 (오늘)\n\n> 로컬 전사 · 화자 구분 미연결 · 시간은 오디오 구간 기준\n<!-- lm:meeting-1:1 -->\n**[00:01:01] 영희**: 다음 주에 확인합니다.\n<!-- /lm:meeting-1:1 -->\n직접 필기';const next=migrateMeeting(old,m);assert.doesNotMatch(next,/<!--|\*\*|구분 미연결/);assert.match(next,/영희: 다음 주/);assert.match(next,/직접 필기/);});
+test('protocol validation rejects control markers and inverted times',()=>{assert.throws(()=>parseEvent('{"type":"segment","segment":{"id":"<!--","text":"x"}}'));assert.throws(()=>parseEvent(JSON.stringify({type:'segment',segment:{...segment,end:0}})));assert.throws(()=>parseEvent('{"type":"run-shell"}'));assert.deepEqual(parseEvent(JSON.stringify({type:'segment',segment})),{type:'segment',segment});});

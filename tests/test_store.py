@@ -30,6 +30,23 @@ class DurableQueueTests(unittest.TestCase):
         first=store.claim();store.fail(first[0],'error')
         second=store.claim();self.assertEqual(second[1],'b.wav');store.complete(second[0],{'text':'b'})
         self.assertIsNone(store.claim());store.retry();self.assertEqual(store.claim()[0],first[0]);store.close()
+    def test_import_keeps_short_tail_with_context(self):
+        source=self.root/'input.wav'
+        with wave.open(str(source),'wb') as audio:
+            audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(16000)
+            audio.writeframes(bytes(16000*2*8+10000))
+        events=[];cap=Capture(self.root,events.append)
+        cap.import_wav(source)
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]['end'],8312)
+    def test_import_rejects_unconverted_audio(self):
+        source=self.root/'stereo.wav'
+        with wave.open(str(source),'wb') as audio:
+            audio.setnchannels(2);audio.setsampwidth(2);audio.setframerate(48000)
+            audio.writeframes(bytes(4800))
+        cap=Capture(self.root,lambda _:None)
+        with self.assertRaises(ValueError):cap.import_wav(source)
+
     def test_disk_writer_drains_remaining_samples_on_stop(self):
         events=[];cap=Capture(self.root,events.append,rate=16000,seconds=2)
         cap.blocks.put(bytes(64000));cap.blocks.put(bytes(3200));cap.stop_event.set();cap.write_loop()

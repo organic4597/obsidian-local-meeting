@@ -10,3 +10,7 @@ models/
 recordings/
 .DS_Store
 .env*
+
+work/
+
+runtime/

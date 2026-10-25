@@ -10,6 +10,7 @@ import json
 import queue
 import sys
 import threading
+import resource
 from pathlib import Path
 from store import Store
 from capture import Capture
@@ -20,14 +21,16 @@ def emit(event):
     with LOCK:
         OUTPUT.write(json.dumps(event,ensure_ascii=False)+'\n'); OUTPUT.flush()
 
-def commands(inbox):
+def commands(inbox, stop_capture):
     for line in sys.stdin:
         try:
             command=json.loads(line)
             if command.get('type') not in ('stop','retry'):
                 raise ValueError('지원하지 않는 명령')
             inbox.put(command)
+            if command['type']=='stop': stop_capture()
         except Exception as exc: emit({'type':'error','message':str(exc)})
+    stop_capture()
     inbox.put({'type':'stop'})
 
 def run(args):
@@ -39,16 +42,23 @@ def run(args):
     inbox=queue.Queue()
     audio=queue.Queue()  # Paths and timing only, never PCM
     cap=Capture(store.root,audio.put,device=args.device,seconds=args.chunk_seconds)
-    threading.Thread(target=commands,args=(inbox,),daemon=True).start()
-    stopped=args.resume
+    stopped=args.resume or bool(args.input_wav)
     failed=False
+    diar=None
+    fed=set()
     try:
         # Start capture first. Model loading cannot block recording.
-        if not stopped: cap.start()
+        if args.input_wav:
+            cap.import_wav(args.input_wav)
+        elif not stopped: cap.start()
+        threading.Thread(target=commands,args=(inbox,cap.stop),daemon=True).start()
         emit({'type':'status',**store.status(),'state':'모델 로딩 중 / 오디오 저장 중' if not stopped else '복구 중'})
         with contextlib.redirect_stdout(sys.stderr):
             from mlx_qwen3_asr import Session
             session=Session(model=str(model))
+        if args.diar_model and args.diar_library:
+            from diarization import Diarizer,read_pcm,planned_turns,slice_recording
+            diar=Diarizer(args.diar_library,args.diar_model)
         emit({'type':'ready','session':store.root.name})
         for result in store.results():
             if result['text']: emit({'type':'segment','segment':result})
@@ -60,18 +70,38 @@ def run(args):
                 if command['type']=='retry': store.retry()
             if cap.stop_event.is_set() and not stopped:
                 cap.stop(); stopped=True
-                emit({'type':'error','message':cap.error or '녹음이 중지되었습니다.'})
+                if cap.error: emit({'type':'error','message':cap.error})
             while not audio.empty():
                 item=audio.get(); store.add(item['path'],item['start'],item['end'])
-            job=store.claim()
+            if diar:
+                for row in store.rows():
+                    if row[1] not in fed:
+                        diar.push(read_pcm(store.root/row[1]));fed.add(row[1])
+                if stopped:diar.finish()
+            candidate=store.peek()
+            plans=planned_turns(diar.segments(),diar.covered_seconds(),stopped) if diar else []
+            selected=[p for p in plans if candidate and candidate[2]/1000<=p[0]<candidate[3]/1000]
+            ready=not diar or not candidate or (diar.covered_seconds()*1000>=candidate[3]-20 and all(p[3] for p in selected))
+            if stopped:ready=True
+            job=store.claim() if ready else None
             if job:
                 ident,path,start,end=job
                 try:
-                    with contextlib.redirect_stdout(sys.stderr):
-                        result=session.transcribe(str(store.root/path),language='Korean',max_new_tokens=512)
-                    segment={'id':str(ident),'start':start,'end':end,'text':result.text.strip(),'speaker':'unknown'}
-                    store.complete(ident,segment)
-                    if segment['text']: emit({'type':'segment','segment':segment})
+                    segments=[]
+                    if diar:
+                        for i,(a,b,speaker,_) in enumerate(selected):
+                            pcm=slice_recording(store.root,store.rows(),a,b)
+                            if not len(pcm):continue
+                            with contextlib.redirect_stdout(sys.stderr):
+                                result=session.transcribe((pcm,16000),language='Korean',max_new_tokens=512)
+                            segments.append({'id':f'{ident}_{i}','start':round(a*1000),'end':round(b*1000),'text':result.text.strip(),'speaker':speaker})
+                    else:
+                        with contextlib.redirect_stdout(sys.stderr):
+                            result=session.transcribe(str(store.root/path),language='Korean',max_new_tokens=512)
+                        segments=[{'id':str(ident),'start':start,'end':end,'text':result.text.strip(),'speaker':'unknown'}]
+                    store.complete(ident,{'segments':segments})
+                    for segment in segments:
+                        if segment['text']:emit({'type':'segment','segment':segment})
                 except Exception as exc:
                     store.fail(ident,exc)
                     emit({'type':'error','message':f'구간 {ident} 전사 실패. 오디오는 보존됩니다: {exc}'})
@@ -92,6 +122,8 @@ def run(args):
             except Exception as exc: emit({'type':'error','message':str(exc)})
         while not audio.empty():
             item=audio.get(); store.add(item['path'],item['start'],item['end'])
+        (store.root/'metrics.json').write_text(json.dumps({'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'diarization_enabled':diar is not None,'audio_end_ms':max((r[3] for r in store.rows()),default=0)},indent=2))
+        if diar:diar.close()
         store.close()
     emit({'type':'stopped','session':Path(args.session).name})
     return 1 if failed else 0
@@ -101,8 +133,11 @@ if __name__=='__main__':
     parser.add_argument('--model',required=True)
     parser.add_argument('--session',required=True)
     parser.add_argument('--device',type=int)
-    parser.add_argument('--chunk-seconds',type=int,default=8,choices=range(2,16))
+    parser.add_argument('--chunk-seconds',type=int,default=2,choices=range(2,16))
     parser.add_argument('--resume',action='store_true')
+    parser.add_argument('--input-wav')
+    parser.add_argument('--diar-model')
+    parser.add_argument('--diar-library')
     args=parser.parse_args()
     try:
         if args.resume:

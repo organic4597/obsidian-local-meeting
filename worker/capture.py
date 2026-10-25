@@ -21,6 +21,7 @@ class Capture:
         self.stream=None
         self.thread=None
         self.failed_block=None
+        self.stop_lock=threading.Lock()
 
     def callback(self, data, frames, timing, status):
         if status:
@@ -47,6 +48,19 @@ class Capture:
         self.stream.start()
         self.thread=threading.Thread(target=self.write_loop,daemon=True)
         self.thread.start()
+
+    def import_wav(self, path):
+        with wave.open(str(Path(path).resolve()),'rb') as source:
+            if (source.getnchannels(),source.getsampwidth(),source.getframerate()) != (1,2,self.rate):
+                raise ValueError('입력 WAV는 16kHz mono PCM16 형식이어야 합니다.')
+            offset=0
+            while True:
+                remaining=source.getnframes()-source.tell()
+                # Do not decode a tiny final fragment without preceding context.
+                frames=remaining if remaining <= self.rate*(self.seconds+2) else self.rate*self.seconds
+                pcm=source.readframes(frames)
+                if not pcm: break
+                offset=self.write_chunk(pcm,offset)
 
     def write_chunk(self, data, offset):
         end=offset+len(data)//2
@@ -83,9 +97,10 @@ class Capture:
             self.finished.set()
 
     def stop(self):
-        if self.stream:
-            self.stream.stop(); self.stream.close(); self.stream=None
-        self.stop_event.set()
-        if self.thread: self.thread.join(timeout=15)
-        if not self.finished.is_set() and self.thread:
-            raise RuntimeError('오디오 저장 종료를 확인하지 못했습니다.')
+        with self.stop_lock:
+            if self.stream:
+                self.stream.stop(); self.stream.close(); self.stream=None
+            self.stop_event.set()
+            if self.thread: self.thread.join(timeout=15)
+            if not self.finished.is_set() and self.thread:
+                raise RuntimeError('오디오 저장 종료를 확인하지 못했습니다.')
