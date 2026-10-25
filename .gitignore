@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+dist/
+__pycache__/
+*.pyc
+*.sqlite*
+*.wav
+*.safetensors
+models/
+recordings/
+.DS_Store
+.env*

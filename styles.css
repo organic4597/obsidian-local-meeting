@@ -1,0 +1,3 @@
+.lm-error {color:var(--text-error);white-space:pre-wrap;}
+.lm-hint {font-size:var(--font-ui-small);color:var(--text-muted);}
+.workspace-leaf-content[data-type="local-meeting-controls"] .setting-item {flex-wrap:wrap;gap:8px;}

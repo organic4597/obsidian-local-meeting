@@ -1,0 +1,2 @@
+mlx-qwen3-asr==0.4.4
+sounddevice==0.5.5

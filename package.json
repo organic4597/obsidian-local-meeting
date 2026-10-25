@@ -1,0 +1,17 @@
+{
+  "name": "obsidian-local-meeting",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "npm run build && npm test && python3 -m unittest discover -s tests -p 'test_*.py'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "1.14.4",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
