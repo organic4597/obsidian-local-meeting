@@ -54,10 +54,10 @@
 .lm-weekdays {text-align:center;color:var(--text-muted);font-size:11px;padding:5px 0 10px;}
 .lm-weekdays span:first-child {color:var(--text-error);}
 .lm-date-cell {min-width:0;}
-.lm-calendar-modal button.lm-date-button {display:flex;flex-direction:column;align-items:stretch;width:100%;min-height:66px;height:100%;padding:6px 4px;border:1px solid transparent;border-radius:8px;box-shadow:none;background:transparent;line-height:1.4;gap:3px;}
+.lm-calendar-modal button.lm-date-button {display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;width:100%;min-height:66px;height:100%;padding:8px 8px 6px;border:1px solid transparent;border-radius:8px;box-shadow:none;background:transparent;line-height:1.4;gap:3px;}
 .lm-calendar-modal button.lm-date-button:hover {background:var(--background-modifier-hover);}
 .lm-calendar-modal button.lm-date-button.is-selected {background:var(--background-modifier-active-hover);border-color:var(--interactive-accent);}
-.lm-date-number {display:flex;align-items:center;justify-content:center;align-self:center;width:23px;height:23px;font-size:12px;flex:none;}
+.lm-date-number {display:flex;align-items:center;justify-content:center;align-self:flex-end;width:23px;height:23px;font-size:12px;flex:none;}
 .lm-date-button.is-other-month .lm-date-number {color:var(--text-faint);}
 .lm-date-button.is-today .lm-date-number {color:var(--text-on-accent);background:var(--interactive-accent);border-radius:50%;font-weight:600;}
 .lm-date-events {display:flex;flex-direction:column;gap:3px;min-width:0;text-align:left;}
