@@ -1,11 +1,12 @@
 {
   "name": "obsidian-local-meeting",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
     "test": "tsx --test tests/*.test.ts",
-    "check": "npm run build && npm test && python3 -m unittest discover -s tests -p 'test_*.py'"
+    "check": "npm run build && npm test && npm run test:worker",
+    "test:worker": ".venv/bin/python -m unittest discover -s tests -p 'test_*.py'"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

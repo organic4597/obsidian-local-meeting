@@ -142,10 +142,15 @@ if __name__=='__main__':
     parser.add_argument('--input-wav')
     parser.add_argument('--diar-model')
     parser.add_argument('--diar-library')
+    parser.add_argument('--quality',action='store_true')
+    parser.add_argument('--realtime-input',action='store_true',help='Test WAV replay at capture speed (quality pipeline only)')
     args=parser.parse_args()
     try:
         if args.resume:
             recovery=Store(args.session); recovery.recover(); recovery.retry(); recovery.close()
+        if args.quality:
+            from quality_worker import run as quality_run
+            sys.exit(quality_run(args,emit))
         sys.exit(run(args))
     except Exception as exc:
         emit({'type':'error','message':str(exc),'fatal':True}); sys.exit(1)

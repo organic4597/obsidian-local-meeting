@@ -24,9 +24,11 @@ class Capture:
         self.failed_block=None
         self.stop_lock=threading.Lock()
         self.recording=None
+        self.diagnostics={'device':'준비 중','sampleRate':rate,'channels':1,'rmsDbfs':-120,'peakDbfs':-120,'clippedSamples':0,'samples':0,'inputErrors':0}
 
     def callback(self, data, frames, timing, status):
         if status:
+            self.diagnostics['inputErrors']+=1
             self.error=f'오디오 장치 데이터 손실: {status}'
             self.stop_event.set()
         block=bytes(data)
@@ -47,6 +49,8 @@ class Capture:
             raise RuntimeError('기존 세션에는 추가 녹음할 수 없습니다. 새 회의를 시작하세요.')
         self.recording=ContinuousWav(self.root/'recording.wav',self.rate)
         try:
+            device=sd.query_devices(self.device,'input')
+            self.diagnostics['device']=str(device['name'])
             self.stream=sd.RawInputStream(samplerate=self.rate,blocksize=self.rate//10,
                 channels=1,dtype='int16',device=self.device,callback=self.callback)
             self.stream.start()
@@ -56,7 +60,8 @@ class Capture:
         self.thread=threading.Thread(target=self.write_loop,daemon=True)
         self.thread.start()
 
-    def import_wav(self, path):
+    def import_wav(self, path, realtime=False):
+        self.diagnostics['device']='로컬 WAV 파일'
         with wave.open(str(Path(path).resolve()),'rb') as source:
             if (source.getnchannels(),source.getsampwidth(),source.getframerate()) != (1,2,self.rate):
                 raise ValueError('입력 WAV는 16kHz mono PCM16 형식이어야 합니다.')
@@ -69,8 +74,9 @@ class Capture:
                     frames=remaining if remaining <= self.rate*(self.seconds+2) else self.rate*self.seconds
                     pcm=source.readframes(frames)
                     if not pcm:break
-                    self.recording.append(pcm);offset=self.write_chunk(pcm,offset)
-            finally:self.recording.close();self.recording=None
+                    if realtime and self.stop_event.wait(len(pcm)/(self.rate*2)):break
+                    self.recording.append(pcm);self.measure(pcm);offset=self.write_chunk(pcm,offset)
+            finally:self.recording.close();self.recording=None;self.finished.set()
 
     def write_chunk(self, data, offset):
         end=offset+len(data)//2
@@ -94,7 +100,7 @@ class Capture:
             while not self.stop_event.is_set() or not self.blocks.empty():
                 try: block=self.blocks.get(timeout=.1)
                 except queue.Empty: continue
-                self.recording.append(block);data.extend(block)
+                self.recording.append(block);self.measure(block);data.extend(block)
                 if len(data)>=limit:
                     offset=self.write_chunk(bytes(data[:limit]),offset)
                     del data[:limit]
@@ -109,6 +115,16 @@ class Capture:
             except Exception as exc:
                 self.error=f'전체 녹음 저장 실패: {exc}';self.stop_event.set()
             finally:self.finished.set()
+
+    def measure(self,block):
+        import array,math
+        samples=array.array('h');samples.frombytes(block)
+        if not samples:return
+        peak=max(abs(v) for v in samples)/32768
+        rms=math.sqrt(sum(v*v for v in samples)/len(samples))/32768
+        self.diagnostics={**self.diagnostics,'peakDbfs':round(20*math.log10(max(peak,1e-6)),1),
+            'rmsDbfs':round(20*math.log10(max(rms,1e-6)),1),'samples':self.diagnostics['samples']+len(samples),
+            'clippedSamples':self.diagnostics['clippedSamples']+sum(abs(v)>=32760 for v in samples)}
 
     def stop(self):
         with self.stop_lock:

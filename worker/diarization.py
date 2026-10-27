@@ -20,6 +20,9 @@ class Diarizer:
         L.nemo_speech_diar_stream_finish.argtypes=[C.c_void_p]
         L.nemo_speech_diar_frame_count.argtypes=[C.c_void_p];L.nemo_speech_diar_frame_count.restype=C.c_int64
         L.nemo_speech_diar_seconds_per_frame.argtypes=[C.c_void_p];L.nemo_speech_diar_seconds_per_frame.restype=C.c_double
+        L.nemo_speech_diar_num_speakers.argtypes=[C.c_void_p];L.nemo_speech_diar_num_speakers.restype=C.c_int32
+        L.nemo_speech_diar_frame_probs_start.argtypes=[C.c_void_p];L.nemo_speech_diar_frame_probs_start.restype=C.c_int64
+        L.nemo_speech_diar_frame_probs.argtypes=[C.c_void_p,C.POINTER(C.c_float),C.c_size_t]
         L.nemo_speech_diar_segments.argtypes=[C.c_void_p,C.c_void_p,C.POINTER(Segment),C.c_size_t,C.POINTER(C.c_size_t)]
         L.nemo_speech_diar_stream_close.argtypes=[C.c_void_p];L.nemo_speech_diar_destroy.argtypes=[C.c_void_p]
         L.nemo_speech_asr_last_error.restype=C.c_char_p
@@ -42,6 +45,14 @@ class Diarizer:
         count=C.c_size_t();self.check(self.lib.nemo_speech_diar_segments(self.stream,None,None,0,C.byref(count)))
         buf=(Segment*count.value)();self.check(self.lib.nemo_speech_diar_segments(self.stream,None,buf,len(buf),C.byref(count)))
         return [(s.start,s.end,s.speaker) for s in buf[:count.value]]
+    def activity(self):
+        first=self.lib.nemo_speech_diar_frame_probs_start(self.stream)
+        count=self.lib.nemo_speech_diar_frame_count(self.stream)-first
+        speakers=self.lib.nemo_speech_diar_num_speakers(self.model)
+        if count<0 or not 1<=speakers<=8:raise RuntimeError('잘못된 화자 활동 출력')
+        values=np.empty((count,speakers),dtype=np.float32)
+        if count:self.check(self.lib.nemo_speech_diar_frame_probs(self.stream,values.ctypes.data_as(C.POINTER(C.c_float)),values.size))
+        return first,values,self.lib.nemo_speech_diar_seconds_per_frame(self.model)
     def close(self):
         if self.stream:self.lib.nemo_speech_diar_stream_close(self.stream);self.stream=C.c_void_p()
         if self.model:self.lib.nemo_speech_diar_destroy(self.model);self.model=C.c_void_p()

@@ -1,7 +1,10 @@
 import {textEdits} from './text-edits';
-export interface Segment { id: string; start: number; end: number; text: string; speaker: string; speakerLocked?:boolean; }
+export interface TermChange {id:string;termId:string;start:number;end:number;before:string;after:string;state:'suggested'|'applied'|'dismissed';}
+export interface Candidate {speaker:string;activity:number;activeSeconds:number;}
+export interface ReviewHistory {at:string;before:{text:string;speaker:string;textLocked?:boolean;speakerLocked?:boolean;speakerState?:Segment['speakerState'];suggestions?:TermChange[];reviewedRevision?:number};afterText:string;afterSpeaker:string;userRevision:number;}
+export interface Segment { id: string; start: number; end: number; text: string; speaker: string; speakerLocked?:boolean; textLocked?:boolean;revision?:number;eventId?:string;rawText?:string;textState?:'stable'|'provisional'|'review_required';speakerState?:'single'|'overlap'|'unknown'|'manual';candidates?:Candidate[];reviewReasons?:string[];suggestions?:TermChange[];dictionaryRevision?:string;reviewedRevision?:number;userRevision?:number;history?:ReviewHistory[]; }
 export interface Anchor {from:number;to:number;locked?:boolean;deleted?:boolean;continuation?:boolean;}
-export interface Meeting { id:string;note:string;directory:string;started:string;speakers:Record<string,string>;segments:Segment[];rendered:Record<string,string>;anchors?:Record<string,Anchor>;noteSnapshot?:string;paragraphPauseMs?:number; }
+export interface Meeting { id:string;note:string;directory:string;started:string;speakers:Record<string,string>;segments:Segment[];rendered:Record<string,string>;anchors?:Record<string,Anchor>;noteSnapshot?:string;paragraphPauseMs?:number;pipelineVersion?:number;dictionaryRevision?:string; }
 export function timestamp(ms:number):string {const s=Math.floor(ms/1000);return `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
 const clean=(s:string)=>s.replace(/[\r\n]+/g,' ').replace(/<!--/g,'&lt;!--');
 export function speakerName(segment:Segment,speakers:Record<string,string>):string {return clean(speakers[segment.speaker]??(segment.speaker==='unknown'?'화자 미확정':segment.speaker==='overlap'?'동시 발언':segment.speaker.replace(/^speaker_/, '화자 ')));}
@@ -80,11 +83,17 @@ export function patchSegment(note:string,meeting:Meeting,segment:Segment,showTim
  if(!inline&&wasInline&&gap===' ')return replace(previousAnchor!.to,anchor.to,'\n\n',next,false);
  return replace(anchor.from,anchor.to,'',next,inline);
 }
-export type WorkerEvent={type:'ready'|'stopped';session:string}|{type:'status';pending:number;lag:number;state:string}|{type:'segment';segment:Segment}|{type:'error';message:string;fatal?:boolean};
+export type WorkerEvent={type:'ready'|'stopped';session:string}|{type:'hello';session:string;protocol:number;features:string[]}|{type:'config_applied';session:string;revision:string;afterSample:number}|{type:'status';pending:number;lag:number;state:string;diagnostics?:Record<string,unknown>;pendingAudioSeconds?:number;oldestUnprocessedAge?:number;captureCommittedSample?:number;transcriptCommittedSample?:number}|{type:'segment';session?:string;segment:Segment}|{type:'error';message:string;fatal?:boolean};
 export function parseEvent(line:string):WorkerEvent {
  const x:unknown=JSON.parse(line);if(!x||typeof x!=='object'||!('type'in x))throw new Error('잘못된 워커 메시지');const e=x as Record<string,unknown>;
- if(e.type==='segment'){const s=e.segment as Segment|undefined;if(!s||typeof s.id!=='string'||!/^[a-zA-Z0-9_-]+$/.test(s.id)||typeof s.text!=='string'||typeof s.speaker!=='string'||!Number.isFinite(s.start)||!Number.isFinite(s.end)||s.start<0||s.end<s.start)throw new Error('잘못된 전사 구간');}
+ if(e.type==='segment'){const s=e.segment as Segment|undefined;if(!s||typeof s.id!=='string'||!/^[a-zA-Z0-9_-]+$/.test(s.id)||typeof s.text!=='string'||typeof s.speaker!=='string'||!Number.isFinite(s.start)||!Number.isFinite(s.end)||s.start<0||s.end<s.start)throw new Error('잘못된 전사 구간');
+  if(s.revision!==undefined&&(!Number.isSafeInteger(s.revision)||s.revision<1))throw new Error('잘못된 개정 번호');
+  if(s.candidates!==undefined&&(!Array.isArray(s.candidates)||s.candidates.length>8||s.candidates.some(c=>typeof c.speaker!=='string'||!Number.isFinite(c.activity)||c.activity<0||c.activity>1||!Number.isFinite(c.activeSeconds)||c.activeSeconds<0)))throw new Error('잘못된 화자 후보');
+  if(s.suggestions!==undefined&&(!Array.isArray(s.suggestions)||s.suggestions.some(c=>typeof c.id!=='string'||typeof c.before!=='string'||typeof c.after!=='string'||!Number.isInteger(c.start)||!Number.isInteger(c.end)||c.start<0||c.end<c.start||c.end>s.text.length||!['suggested','applied','dismissed'].includes(c.state))))throw new Error('잘못된 용어 교정');
+ }
  else if(e.type==='error'){if(typeof e.message!=='string')throw new Error('잘못된 오류');}
  else if(e.type==='status'){if(typeof e.state!=='string'||!Number.isFinite(e.pending)||!Number.isFinite(e.lag))throw new Error('잘못된 상태');}
+ else if(e.type==='hello'){if(typeof e.session!=='string'||e.protocol!==2||!Array.isArray(e.features))throw new Error('지원하지 않는 워커 프로토콜');}
+ else if(e.type==='config_applied'){if(typeof e.session!=='string'||typeof e.revision!=='string'||!Number.isSafeInteger(e.afterSample))throw new Error('잘못된 사전 적용 응답');}
  else if(e.type!=='ready'&&e.type!=='stopped')throw new Error('알 수 없는 워커 메시지');return x as WorkerEvent;
 }

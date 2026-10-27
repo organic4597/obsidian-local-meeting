@@ -1,0 +1,18 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {Meeting,Segment,patchSegment,rebaseAnchors,parseEvent} from '../src/model';
+import {acceptRevision,needsReview,reviewEdit,undoReview} from '../src/quality-model';
+import {transcriptChanges} from '../src/editor-changes';
+import {audioRange} from '../src/audio-review';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+const segment:Segment={id:'u_1',start:0,end:3000,speaker:'speaker_1',text:'원문',revision:1};
+const meeting=():Meeting=>({id:'meeting',note:'meeting.md',directory:'/tmp/test',started:'',speakers:{},segments:[{...segment}],rendered:{}});
+test('stale and duplicate revisions cannot replace newer speech',()=>{const m=meeting();assert.equal(acceptRevision(m,{...segment,text:'중복'}),null);const next=acceptRevision(m,{...segment,revision:2,text:'신규'});assert.equal(next?.segment.text,'신규');});
+test('typed speech and manual speaker survive higher model revisions',()=>{const m=meeting();const note=patchSegment('',m,segment);rebaseAnchors(m,note,note.replace('원문','내 필기'));m.segments[0]!.speakerLocked=true;const next=acceptRevision(m,{...segment,revision:2,text:'모델',speaker:'speaker_2'});assert.equal(next?.segment.text,'원문');assert.equal(next?.segment.speaker,'speaker_1');assert.equal(next?.segment.textLocked,true);});
+test('deleted speech cannot be resurrected even with new text',()=>{const m=meeting();const before=patchSegment('',m,segment);rebaseAnchors(m,before,'삭제');const next=acceptRevision(m,{...segment,revision:2,text:'다시 생성'})!;m.segments=[next.segment];assert.equal(transcriptChanges('삭제',m,['u_1']).text,'삭제');});
+test('manual correction is guarded and can be undone',()=>{const s={...segment};reviewEdit(s,1,'원문','교정','speaker_2');assert.equal(s.textLocked,true);assert.equal(s.speakerLocked,true);assert.throws(()=>reviewEdit(s,1,'원문','오래된 미리보기','speaker_1'));undoReview(s);assert.equal(s.text,'원문');assert.equal(s.speaker,'speaker_1');});
+test('review acknowledgement is revision-specific',()=>{const s={...segment,speaker:'unknown',reviewedRevision:1};assert.equal(needsReview(s),false);assert.equal(needsReview({...s,revision:2}),true);});
+test('quality protocol rejects invalid revision and probability',()=>{assert.throws(()=>parseEvent(JSON.stringify({type:'segment',segment:{...segment,revision:-1}})));assert.throws(()=>parseEvent(JSON.stringify({type:'segment',segment:{...segment,candidates:[{speaker:'s',activity:2,activeSeconds:1}]}})));assert.equal(parseEvent('{"type":"hello","session":"x","protocol":2,"features":[]}').type,'hello');});
+test('audio playback reads a bounded excerpt without creating a second WAV',async()=>{const root=await mkdtemp(join(tmpdir(),'meeting-audio-'));try{const header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+32000*5,4);header.write('WAVEfmt ',8);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(16000,24);header.writeUInt32LE(32000,28);header.writeUInt16LE(2,32);header.writeUInt16LE(16,34);header.write('data',36);header.writeUInt32LE(32000*5,40);const file=join(root,'recording.wav');await writeFile(file,Buffer.concat([header,Buffer.alloc(32000*5)]));const excerpt=Buffer.from(await audioRange(file,2000,3000));assert.equal(excerpt.readUInt32LE(40),32000*3);assert.equal(excerpt.length,44+32000*3);await assert.rejects(audioRange(file,-1,10));}finally{await rm(root,{recursive:true,force:true});}});

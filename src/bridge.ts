@@ -4,10 +4,11 @@ import {parseEvent,WorkerEvent} from './model';
 export class WorkerBridge {
   private child?:ChildProcessWithoutNullStreams;
   constructor(private event:(event:WorkerEvent)=>void,private exit:()=>void) {}
-  start(python:string,script:string,model:string,directory:string,resume:boolean,device:string,inputWav?:string,diarModel?:string,diarLibrary?:string) {
+  start(python:string,script:string,model:string,directory:string,resume:boolean,device:string,inputWav?:string,diarModel?:string,diarLibrary?:string,quality=false) {
     if(this.child) throw new Error('이미 실행 중입니다.');
     const args=['-u',script,'--model',model,'--session',directory];
     if(resume) args.push('--resume');
+    if(quality)args.push('--quality');
     if(inputWav) args.push('--input-wav',inputWav);
     if(diarModel&&diarLibrary)args.push('--diar-model',diarModel,'--diar-library',diarLibrary);
     if(device.trim()) {
@@ -26,9 +27,10 @@ export class WorkerBridge {
       if(code!==0) this.event({type:'error',message:`워커 종료(${code}). ${diagnostic.slice(-1000)}`});
       this.exit();
     });
-    child.stdin.on('error',error=>this.event({type:'error',message:error.message}));
+    child.stdin.on('error',error=>{if((error as NodeJS.ErrnoException).code!=='EPIPE')this.event({type:'error',message:error.message});});
   }
   stop(){this.child?.stdin.write(JSON.stringify({type:'stop'})+'\n');}
   retry(){this.child?.stdin.write(JSON.stringify({type:'retry'})+'\n');}
+  command(command:Record<string,unknown>){const input=this.child?.stdin;if(input?.writable&&!input.destroyed&&!input.writableEnded)input.write(JSON.stringify(command)+'\n');}
   dispose(){this.stop(); this.child?.stdin.end();}
 }
