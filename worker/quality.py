@@ -50,7 +50,7 @@ class Activity:
         if ratio>=.85:return {'speaker':f'speaker_{best+1}','speakerState':'single','candidates':candidates,'activityCoverage':round(ratio,4),'reviewReasons':[]}
         return {'speaker':'unknown','speakerState':'unknown','candidates':candidates,'reviewReasons':['화자 전환 경계 확인 필요']}
     def runs(self,start=0,end=None):
-        end=min(end if end is not None else self.frames*self.step,start+16)
+        end=min(end if end is not None else self.frames*self.step,start+32)
         first,_,active=self.range(start,end)
         return activity_runs(active,first*self.step,self.step,start,end)
 
@@ -70,13 +70,15 @@ def activity_runs(active,offset,step,start=0,end=None):
         if b>a:result.append((a,b,int(masks[lo])))
     return result
 
-def phrase_end(runs,start,available,finished=False,max_seconds=10):
+def phrase_end(runs,start,available,finished=False,max_seconds=20,pauses=(),silence_seconds=.9):
     """Natural pauses and sustained single-speaker changes, never 180ms turn slicing."""
     following=[r for r in runs if r[1]>start+.01]
     if not following:return None
     a=max(start,following[0][0]);last=a;dominant=None
+    endpoints=[lo for lo,hi in pauses if lo>=a+.35 and hi<=available+.001 and hi-lo>=silence_seconds-1e-6 and lo<=a+max_seconds]
+    if endpoints:return a,min(endpoints),True
     for lo,hi,mask in following:
-        if lo-last>=.7 and last>a:return a,last,True
+        if lo-last>=silence_seconds and last>a:return a,last,True
         single=mask if mask&(mask-1)==0 else None
         if dominant and single and single!=dominant and hi-lo>=.8 and lo-a>=1.2:return a,lo,True
         if single and hi-lo>=.8:dominant=single
@@ -86,7 +88,7 @@ def phrase_end(runs,start,available,finished=False,max_seconds=10):
             b=pauses[-1] if pauses else a+max_seconds
             return a,b,available>=b+.8 or finished
         last=max(last,hi)
-    closed=finished or available-last>=.7
+    closed=finished or available-last>=silence_seconds
     return a,last,closed
 
 def write_atomic(path,data):

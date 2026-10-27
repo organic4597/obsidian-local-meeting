@@ -9,7 +9,8 @@ class Segment(C.Structure):
     _fields_=[('start',C.c_double),('end',C.c_double),('speaker',C.c_int32)]
 
 class Diarizer:
-    def __init__(self,library,model):
+    def __init__(self,library,model,preset='v3-streaming'):
+        if preset not in ('v3-streaming','v3-offline'):raise ValueError('지원하지 않는 화자 처리 설정')
         library=Path(library).resolve();model=Path(model).resolve()
         if not library.is_file() or not model.is_file():raise ValueError('로컬 화자 라이브러리와 GGUF 모델 파일이 필요합니다.')
         self.lib=C.CDLL(str(library));self.model=C.c_void_p();self.stream=C.c_void_p()
@@ -26,7 +27,7 @@ class Diarizer:
         L.nemo_speech_diar_segments.argtypes=[C.c_void_p,C.c_void_p,C.POINTER(Segment),C.c_size_t,C.POINTER(C.c_size_t)]
         L.nemo_speech_diar_stream_close.argtypes=[C.c_void_p];L.nemo_speech_diar_destroy.argtypes=[C.c_void_p]
         L.nemo_speech_asr_last_error.restype=C.c_char_p
-        cfg=ModelConfig();cfg.size=C.sizeof(cfg);cfg.model_path=str(model).encode();cfg.gpu=-1;cfg.preset=b'v3-streaming';cfg.left_context_frames=-1
+        cfg=ModelConfig();cfg.size=C.sizeof(cfg);cfg.model_path=str(model).encode();cfg.gpu=-1;cfg.preset=preset.encode();cfg.left_context_frames=-1
         self.check(L.nemo_speech_diar_create(C.byref(cfg),C.byref(self.model)))
         self.check(L.nemo_speech_diar_stream_open(self.model,C.byref(self.stream)))
         self.finished=False

@@ -10,6 +10,8 @@ import threading
 import time
 from pathlib import Path
 from capture import Capture
+from endpoints import PauseHistory
+from finalize_diarization import finalize
 from store import Store
 from quality import Activity,RevisionStore,phrase_end,write_atomic
 from dictionary import snapshot,validate_term,context_text,postprocess
@@ -19,6 +21,8 @@ def run(args,emit):
     if args.resume and store.rows():
         from recording import ensure_recording
         ensure_recording(root)
+    config_path=root/'pipeline.json'
+    config=json.loads(config_path.read_text()) if config_path.exists() else {'schemaVersion':2,'dictionary':snapshot([])}
     saved=revisions.all()
     if args.resume and not store.status()['pending'] and saved and all(s.get('textState')=='stable' for s in saved):
         emit({'type':'hello','session':root.name,'protocol':2,'features':['dictionary','activity','revisions','ack']})
@@ -26,12 +30,12 @@ def run(args,emit):
         for s in saved:emit({'type':'segment','session':root.name,'segment':s})
         previous=json.loads((root/'metrics.json').read_text()) if (root/'metrics.json').exists() else {}
         emit({'type':'status','pending':0,'lag':0,'pendingAudioSeconds':0,'state':'복구 완료','diagnostics':previous.get('diagnostics',{})})
-        store.close();emit({'type':'stopped','session':root.name});return 0
-    config_path=root/'pipeline.json'
-    config=json.loads(config_path.read_text()) if config_path.exists() else {'schemaVersion':2,'dictionary':snapshot([])}
+        try:finalize(root,args.diar_library,args.diar_model,emit,config.get('finalizeSpeakers',True))
+        finally:store.close()
+        emit({'type':'stopped','session':root.name});return 0
     config={**config,'asrModel':Path(args.model).name,'asrConfigHash':hashlib.sha256((Path(args.model)/'config.json').read_bytes()).hexdigest(),
             'diarModel':Path(args.diar_model).name if args.diar_model else None,
-            'geometry':{'maxPhraseSeconds':10,'minUpdateSeconds':3,'silenceSeconds':.7,'onset':.6,'offset':.4,'overlapSeconds':.2},
+            'geometry':{'maxPhraseSeconds':20,'updatePolicy':'endpoint-only','silenceSeconds':.9,'acousticQuietDbfs':-50,'onset':.6,'offset':.4,'overlapSeconds':.2},
             'sourceHash':hashlib.sha256(Path(__file__).read_bytes()+(Path(__file__).parent/'quality.py').read_bytes()).hexdigest(),
             'mode':'realtime-file' if getattr(args,'realtime_input',False) else 'offline-file' if args.input_wav else 'resume' if args.resume else 'microphone'}
     dictionary=config.get('dictionary',snapshot([]))
@@ -41,7 +45,7 @@ def run(args,emit):
     inbox=queue.Queue();audio=queue.Queue();cap=Capture(root,audio.put,device=args.device,seconds=args.chunk_seconds)
     realtime=getattr(args,'realtime_input',False)
     if realtime and not args.input_wav:raise ValueError('실시간 파일 재생은 입력 WAV가 필요합니다.')
-    stopped=args.resume or bool(args.input_wav) and not realtime;diar=None;failed=False;times=[];fed=set();activity=Activity(root)
+    stopped=args.resume or bool(args.input_wav) and not realtime;diar=None;failed=False;times=[];fed=set();activity=Activity(root);pause_history=PauseHistory(root)
     model=Path(args.model).expanduser().resolve()
     if not model.is_dir() or not (model/'config.json').is_file():raise ValueError('로컬 ASR 모델 폴더가 필요합니다.')
     def send(segment):
@@ -57,7 +61,7 @@ def run(args,emit):
                 inbox.put(c)
             except Exception as exc:emit({'type':'error','message':str(exc)})
         cap.stop();inbox.put({'type':'stop'})
-    cursor=float(revisions.get('cursor',0));current=None;last_request=0;hop=3;overload_since=None;healthy_since=None;pending_dictionary=None
+    cursor=float(revisions.get('cursor',0));current=None;pending_dictionary=None
     try:
         if args.input_wav and realtime:
             def replay():
@@ -107,7 +111,8 @@ def run(args,emit):
             changed=False
             for r in rows:
                 if r[1] not in fed:
-                    diar.push(read_pcm(root/r[1]));fed.add(r[1]);changed=True
+                    pcm=read_pcm(root/r[1]);pause_history.add(pcm,r[2]/1000)
+                    diar.push(pcm);fed.add(r[1]);changed=True
                     # Persist before the native runtime compacts old probabilities (>20 minutes).
                     activity.update(*diar.activity())
             if stopped and not diar.finished:diar.finish();changed=True;activity.update(*diar.activity())
@@ -122,8 +127,8 @@ def run(args,emit):
                     send(revisions.put(updated))
             did_work=False
             while not failed and cursor<covered-.02:
-                runs=activity.runs(cursor,min(covered,cursor+16))
-                plan=phrase_end(runs,cursor,covered,stopped)
+                runs=activity.runs(cursor,min(covered,cursor+24))
+                plan=phrase_end(runs,cursor,covered,stopped,pauses=pause_history.pauses(cursor,min(covered,cursor+24)))
                 if plan is None:
                     cursor=min(covered,cursor+15);revisions.set('cursor',cursor);continue
                 a,b,closed=plan
@@ -134,7 +139,7 @@ def run(args,emit):
                     write_atomic(root/'dictionary-snapshot.json',dictionary)
                     write_atomic(config_path,{**config,'schemaVersion':2,'dictionary':dictionary})
                     emit({'type':'config_applied','session':root.name,'revision':dictionary['revision'],'afterSample':round(a*16000)})
-                if not closed and (b-a<2 or b-last_request<hop):break
+                if not closed:break
                 ident=current['id'] if current else f'u_{round(a*16000):012d}'
                 pcm=slice_recording(root,rows,a,b)
                 if not len(pcm):break
@@ -149,7 +154,7 @@ def run(args,emit):
                        **evidence,'reviewReasons':reasons,'textState':'stable' if closed else 'provisional',
                        'dictionaryRevision':dictionary['revision'],'suggestions':changes}
                     stored=revisions.put(s);send(stored);current=stored or s
-                    last_request=b;did_work=True
+                    did_work=True
                     if closed:
                         cursor=b;revisions.set('cursor',cursor);current=None
                     else:break
@@ -161,18 +166,11 @@ def run(args,emit):
                 for r in rows:
                     if r[4]!='done' and r[3]/1000<=cursor+.02:store.complete(r[0],{'segments':[]})
             status=store.status();pending_seconds=max(0,available-cursor)
-            now=time.monotonic()
-            if pending_seconds>10:
-                overload_since=overload_since or now;healthy_since=None
-                if now-overload_since>=15:hop=5
-            elif pending_seconds<5:
-                healthy_since=healthy_since or now;overload_since=None
-                if now-healthy_since>=30:hop=3
             emit({'type':'status',**status,'state':'남은 구간 처리 중' if stopped else '녹음 중',
                   'pendingAudioSeconds':round(pending_seconds,2),'oldestUnprocessedAge':round(pending_seconds,2),
                   'captureCommittedSample':round(available*16000),'transcriptCommittedSample':round(cursor*16000),
                   'diagnostics':{**cap.diagnostics,'contextTerms':len(dictionary['terms']),'contextTokens':len(session.tokenizer.encode(context)),'dictionaryRevision':dictionary['revision'],
-                  'hopSeconds':hop,'protocol':2,'reviewCount':sum(bool(s.get('reviewReasons') or any(c['state']=='suggested' for c in s.get('suggestions',[]))) for s in revisions.all())}})
+                  'updatePolicy':'endpoint-only','maxPhraseSeconds':20,'silenceSeconds':.9,'protocol':2,'reviewCount':sum(bool(s.get('reviewReasons') or any(c['state']=='suggested' for c in s.get('suggestions',[]))) for s in revisions.all())}})
             if stopped:
                 if failed or cursor>=available-.02:break
                 if not did_work:
@@ -200,5 +198,15 @@ def run(args,emit):
             'diagnostics':cap.diagnostics})
         if diar:diar.close()
         store.close()
+    if not failed:
+        del session
+        import gc
+        gc.collect()
+        import mlx.core as mx
+        mx.clear_cache()
+        try:finalize(root,args.diar_library,args.diar_model,emit,config.get('finalizeSpeakers',True))
+        except Exception as exc:
+            emit({'type':'error','message':f'종료 후 화자 재분석 실패. 실시간 결과와 원음은 보존됐습니다. 세션 복구로 재시도하세요: {exc}'})
+            failed=True
     emit({'type':'stopped','session':root.name})
     return 1 if failed else 0

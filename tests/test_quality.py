@@ -27,8 +27,8 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(phrase_end([(0,4,1),(4,4.2,3),(4.2,6,1)],0,7),(0,6,True))
     def test_active_phrase_is_provisional_until_lookahead(self):
         self.assertEqual(phrase_end([(0,6,1)],0,6),(0,6,False))
-        self.assertEqual(phrase_end([(0,11,1)],0,10),(0,10,False))
-        self.assertEqual(phrase_end([(0,11,1)],0,11),(0,10,True))
+        self.assertEqual(phrase_end([(0,11,1)],0,10,max_seconds=10),(0,10,False))
+        self.assertEqual(phrase_end([(0,11,1)],0,11,max_seconds=10),(0,10,True))
     def test_revision_commit_replay_and_ack(self):
         with tempfile.TemporaryDirectory() as root:
             store=Store(root);r=RevisionStore(store);s={'id':'u_1','start':0,'end':2000,'text':'처음','speaker':'unknown'}

@@ -143,9 +143,16 @@ if __name__=='__main__':
     parser.add_argument('--diar-model')
     parser.add_argument('--diar-library')
     parser.add_argument('--quality',action='store_true')
+    parser.add_argument('--refine-only',action='store_true')
     parser.add_argument('--realtime-input',action='store_true',help='Test WAV replay at capture speed (quality pipeline only)')
     args=parser.parse_args()
     try:
+        if args.refine_only:
+            from finalize_diarization import finalize
+            emit({'type':'hello','session':Path(args.session).name,'protocol':2,'features':['speaker_refinement']})
+            finalize(args.session,args.diar_library,args.diar_model,emit)
+            emit({'type':'stopped','session':Path(args.session).name})
+            sys.exit(0)
         if args.resume:
             recovery=Store(args.session); recovery.recover(); recovery.retry(); recovery.close()
         if args.quality:
