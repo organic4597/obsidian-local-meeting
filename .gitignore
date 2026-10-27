@@ -14,3 +14,5 @@ recordings/
 work/
 
 runtime/
+
+.venv-*

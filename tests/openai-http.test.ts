@@ -1,0 +1,2 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {openAIRequest} from '../src/openai-http';
+test('bearer credentials cannot be sent to non-OpenAI or insecure endpoints',async()=>{await assert.rejects(()=>openAIRequest('https://example.test/v1/responses','POST',{authorization:'Bearer synthetic-token'}),/허용되지/);await assert.rejects(()=>openAIRequest('http://api.openai.com/v1/responses','POST',{}),/허용되지/);});

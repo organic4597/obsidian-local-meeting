@@ -2,12 +2,12 @@ import {App,MarkdownView,FileSystemAdapter,ItemView,Notice,Plugin,PluginSettingT
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {existsSync} from 'node:fs';
-import {join,isAbsolute} from 'node:path';
+import {join,isAbsolute,dirname,basename} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdir,writeFile,readFile,rename,copyFile} from 'node:fs/promises';
 import {Meeting,WorkerEvent,rebaseAnchors,migrateMeeting,speakerName,timestamp} from './model';
 import {WorkerBridge} from './bridge';
-import {CalendarModal,TaskModal} from './calendar';
+import {CalendarModal,TaskModal,openCalendarCandidate} from './calendar';
 import {MeetingEditors} from './editor-sync';
 import {textChange,transcriptChanges} from './editor-changes';
 import {ChangeSet} from '@codemirror/state';
@@ -16,9 +16,14 @@ import {LocalDictionary,dictionaryCsv} from './dictionary';
 import {DictionaryModal,TermModal,ReviewModal} from './quality-ui';
 import {acceptRevision,needsReview,reviewEdit,undoReview} from './quality-model';
 import {refineSpeakers} from './speaker-refinement';
+import {splitAlignedSpeakers} from './aligned-speakers';
+import {ChatGPTAuth} from './openai-auth';
+import {MeetingSetupModal} from './meeting-setup';
+import {AIControlsModal,ChatGPTWelcomeModal} from './ai-ui';
+import {summaryInput,requestSummary,summaryMarkdown,SummaryResult,MeetingEvent} from './ai-summary';
 
-interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;overlayPosition:OverlayPosition|null;paragraphPauseSeconds:number;dictionaryEnabled:boolean;dictionaryProject:string;finalizeSpeakers:boolean;expectedSpeakers:number;}
-const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:'',overlayPosition:null,paragraphPauseSeconds:2.5,dictionaryEnabled:true,dictionaryProject:'',finalizeSpeakers:true,expectedSpeakers:0};
+interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;overlayPosition:OverlayPosition|null;paragraphPauseSeconds:number;dictionaryEnabled:boolean;dictionaryProject:string;finalizeSpeakers:boolean;expectedSpeakers:number;communityPython:string;communityModel:string;alignerModel:string;speakerCountMode:'maximum'|'exact';aiModel:string;aiAutoSummary:boolean;}
+const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:'',overlayPosition:null,paragraphPauseSeconds:2.5,dictionaryEnabled:true,dictionaryProject:'',finalizeSpeakers:true,expectedSpeakers:0,communityPython:'',communityModel:'',alignerModel:'',speakerCountMode:'maximum',aiModel:'',aiAutoSummary:true};
 const VIEW='local-meeting-controls';
 export default class LocalMeeting extends Plugin {
   settings:Settings={...DEFAULT};
@@ -26,6 +31,7 @@ export default class LocalMeeting extends Plugin {
   bridge?:WorkerBridge;
   state='대기'; pending=0; lag=0; error='';typingPaused=false;
   diagnostics:Record<string,unknown>={};private protocol=0;private dictionaryUpdates:Promise<unknown>=Promise.resolve();private persistFailed=false;
+  private auth!:ChatGPTAuth;private summaryBusy=false;
   private editors!:MeetingEditors;
   private writes:Promise<unknown>=Promise.resolve();
   private status!:HTMLElement;
@@ -40,8 +46,13 @@ export default class LocalMeeting extends Plugin {
   private persistTimer?:number;
   async onload(){
     this.settings=Object.assign({},DEFAULT,await this.loadData());
-    if(!Number.isInteger(this.settings.expectedSpeakers)||this.settings.expectedSpeakers<0||this.settings.expectedSpeakers>8)this.settings.expectedSpeakers=0;
+    if(!Number.isInteger(this.settings.expectedSpeakers)||this.settings.expectedSpeakers<0||this.settings.expectedSpeakers>32)this.settings.expectedSpeakers=0;
     if(![2,2.5,3].includes(this.settings.paragraphPauseSeconds))this.settings.paragraphPauseSeconds=2.5;
+    if(!['maximum','exact'].includes(this.settings.speakerCountMode))this.settings.speakerCountMode='maximum';
+    const adapter=this.app.vault.adapter as FileSystemAdapter;
+    try{const runtime=JSON.parse(await readFile(join(adapter.getBasePath(),this.manifest.dir!,'local-runtime.json'),'utf8'));for(const key of ['communityPython','communityModel','alignerModel'] as const)if(!this.settings[key]&&typeof runtime[key]==='string'&&isAbsolute(runtime[key])&&existsSync(runtime[key]))this.settings[key]=runtime[key];}catch{}
+    const secretId='local-meeting-chatgpt-'+createHash('sha256').update(adapter.getBasePath()).digest('hex').slice(0,16);
+    this.auth=new ChatGPTAuth({read:async()=>{const value=this.app.secretStorage.getSecret(secretId);return value?JSON.parse(value):null;},write:async value=>this.app.secretStorage.setSecret(secretId,JSON.stringify(value))},url=>require('electron').shell.openExternal(url));
     this.editors=new MeetingEditors(view=>view.state.field(editorInfoField,false)?.file?.path,paused=>{this.typingPaused=paused;this.refresh();});
     this.registerEditorExtension(this.editors.extension);
     this.registerView(VIEW,leaf=>new MeetingView(leaf,this));
@@ -50,6 +61,7 @@ export default class LocalMeeting extends Plugin {
         if(params.op==='time'){await this.toggleTime();return;}
         if(params.op==='minimize'){for(const leaf of this.app.workspace.getLeavesOfType(VIEW))leaf.detach();return;}
         if(params.op==='calendar'){this.openCalendar();return;}
+        if(params.op==='ai'){new AIControlsModal(this.app,this).open();return;}
         if(params.op==='dictionary'){new DictionaryModal(this.app,this).open();return;}
         if(params.op==='review'){new ReviewModal(this.app,this).open();return;}
         if(params.op==='controls'){await this.openControls();return;}
@@ -89,6 +101,7 @@ export default class LocalMeeting extends Plugin {
     this.addCommand({id:'dictionary-toggle',name:'회의 사전 켜기 / 끄기',callback:()=>{this.settings.dictionaryEnabled=!this.settings.dictionaryEnabled;void this.guard(()=>this.dictionaryChanged());}});
     this.addCommand({id:'dictionary-selection',name:'선택한 표현을 사전에 추가',callback:()=>{void this.guard(async()=>{const selection=this.app.workspace.getActiveViewOfType(MarkdownView)?.editor.getSelection()??'';const data=await this.dictionary().request({type:'list'});new TermModal(this.app,this,data,undefined,undefined,selection).open();});}});
     this.addCommand({id:'review',name:'확인 필요한 발언 검토',callback:()=>new ReviewModal(this.app,this).open()});
+    this.addCommand({id:'ai-summary',name:'OpenAI 요약·할 일·일정 정리',callback:()=>new AIControlsModal(this.app,this).open()});
     this.addCommand({id:'refine-speakers',name:'현재 회의 종료 후 화자 재분석',callback:()=>{void this.guard(()=>this.reanalyseSpeakers());}});
     this.addCommand({id:'diagnostics',name:'현재 회의 진단 내보내기',callback:()=>{void this.guard(()=>this.exportDiagnostics());}});
   }
@@ -96,12 +109,12 @@ export default class LocalMeeting extends Plugin {
   showError(error:string){this.error=error;new Notice(error,8000);this.refresh();}
   refresh(force=false){
     this.status?.setText(`회의: ${this.state} · 대기 ${this.pending} · ${this.lag.toFixed(0)}초`);
-    this.overlay?.toggleClass('is-running',!!this.bridge&&!this.closing);this.overlay?.toggleClass('is-processing',!!this.bridge&&this.closing);this.overlay?.toggleClass('has-error',!!this.error);
+    this.overlay?.toggleClass('is-running',!!this.bridge&&!this.closing);this.overlay?.toggleClass('is-processing',!!this.bridge&&this.closing||this.summaryBusy);this.overlay?.toggleClass('has-error',!!this.error);
     this.overlayButton?.setAttribute('aria-label',`로컬 회의록: ${this.state}. 대기 ${this.pending}개. 클릭하면 제어 메뉴를 엽니다.`);
     this.overlayButton?.setAttribute('title',`${this.state} · 대기 ${this.pending}개\n드래그하여 이동 · 클릭하여 메뉴 · ⌘⇧M 시작/중지`);
     const review=this.meeting?.segments.filter(needsReview).length??0;
     if(this.overlayReview){const wasHidden=this.overlayReview.hidden;this.overlayReview.hidden=review===0;this.overlayReview.setText(`검토 ${review>99?'99+':review}`);if(wasHidden!==this.overlayReview.hidden)this.overlayDrag?.refreshPosition();}
-    this.overlayState?.setText(this.typingPaused?'입력 대기':this.bridge?(this.closing?'처리 중':this.state.includes('녹음')?'녹음 중':'작동 중'):(this.error?'확인 필요':'대기'));
+    this.overlayState?.setText(this.summaryBusy?'AI 정리':this.typingPaused?'입력 대기':this.bridge?(this.closing?'처리 중':this.state.includes('녹음')?'녹음 중':'작동 중'):(this.error?'확인 필요':'대기'));
     this.overlayButton?.setAttribute('title',`${this.state} · 대기 ${this.pending}개 · 검토 ${review}개\n드래그하여 이동 · ⌘⇧M 시작/중지`);
     for(const leaf of this.app.workspace.getLeavesOfType(VIEW)) if(leaf.view instanceof MeetingView) leaf.view.render(force);
   }
@@ -163,10 +176,10 @@ export default class LocalMeeting extends Plugin {
     return storage;
   }
   private validate(){
-    if(this.bridge) throw new Error('기존 전사가 종료될 때까지 기다리세요.');
+    if(this.bridge||this.summaryBusy) throw new Error('진행 중인 전사와 AI 정리가 끝날 때까지 기다리세요.');
     if(!isAbsolute(this.settings.model)) throw new Error('로컬 MLX 모델 폴더의 절대 경로가 필요합니다.');
     this.root();
-    if(!this.settings.diarModel||!this.settings.diarLibrary)throw new Error('설정에서 자동 화자 구분 모델과 네이티브 라이브러리를 연결하세요.');
+    if(!this.settings.communityPython||!this.settings.communityModel||!this.settings.alignerModel)throw new Error('설정에서 Community-1 Python·로컬 모델·대사 정렬 모델을 연결하세요.');
   }
   async start(inputWav?:string){
     if(this.transitioning)return;
@@ -176,12 +189,14 @@ export default class LocalMeeting extends Plugin {
     if(inputWav!==undefined && !isAbsolute(inputWav))throw new Error('설정에서 테스트 WAV 절대 경로를 지정하세요.');
     const note=this.app.workspace.getActiveFile();
     if(!(note instanceof TFile)||note.extension!=='md') throw new Error('회의를 기록할 Markdown 노트를 먼저 여세요.');
+    const participantLimit=inputWav?{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode}:await MeetingSetupModal.ask(this.app,{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode});
+    if(!participantLimit)return;
     const id=randomUUID(); const directory=join(this.root(),id);
     await mkdir(directory,{recursive:true});
     const dictionary=await this.dictionary().request({type:'snapshot',project:this.settings.dictionaryProject,meeting:id,enabled:this.settings.dictionaryEnabled});
     const modelConfig=await readFile(join(this.settings.model,'config.json'),'utf8');
-    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:2,dictionary:dictionary.snapshot,finalizeSpeakers:this.settings.finalizeSpeakers,expectedSpeakers:this.settings.expectedSpeakers,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
-    this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000,pipelineVersion:2,dictionaryRevision:dictionary.snapshot.revision};
+    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',dictionary:dictionary.snapshot,finalizeSpeakers:true,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
+    this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000,pipelineVersion:3,transcriptMode:'text-only',speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,dictionaryRevision:dictionary.snapshot.revision};
     await this.saveMeeting();
     this.settings.lastSession=directory; await this.saveData(this.settings);
     this.meeting.noteSnapshot=await this.app.vault.read(note);
@@ -203,7 +218,7 @@ export default class LocalMeeting extends Plugin {
     } finally {this.transitioning=false;}
   }
   async reanalyseSpeakers(){
-    if(this.bridge||this.transitioning)throw new Error('진행 중인 녹음과 처리가 끝난 뒤 실행하세요.');
+    if(this.bridge||this.transitioning||this.summaryBusy)throw new Error('진행 중인 녹음과 처리가 끝난 뒤 실행하세요.');
     if(!this.meeting)throw new Error('불러온 회의가 없습니다.');
     if(!existsSync(join(this.meeting.directory,'recording.wav')))throw new Error('회의 전체 WAV가 없습니다.');
     this.transitioning=true;
@@ -218,9 +233,10 @@ export default class LocalMeeting extends Plugin {
     const bridge=new WorkerBridge(event=>this.receive(event,meeting.id),()=>{
       if(this.meeting?.id!==meeting.id)return;
       this.bridge=undefined;this.state='종료';this.refresh();this.writes=this.writes.then(()=>this.saveMeeting()).catch(error=>this.showError(String(error)));
+      void this.writes.then(async()=>{if(this.meeting?.id===meeting.id&&meeting.pipelineVersion===3&&meeting.speakerPassId&&!this.error&&this.settings.aiAutoSummary)await this.generateSummary(true);}).catch(error=>this.showError(String(error)));
     });
     this.bridge=bridge;
-    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,this.settings.diarModel,this.settings.diarLibrary,meeting.pipelineVersion===2,refineOnly);}
+    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,this.settings.diarModel,this.settings.diarLibrary,(meeting.pipelineVersion??0)>=2,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})});}
     catch(error){this.bridge=undefined;this.state='오류';throw error;}
     this.refresh();
   }
@@ -231,7 +247,7 @@ export default class LocalMeeting extends Plugin {
     if(event.type==='hello'){this.protocol=event.protocol;}
     if(event.type==='config_applied'){this.meeting.dictionaryRevision=event.revision;this.writes=this.writes.then(()=>this.saveMeeting()).catch(e=>this.showError(String(e)));}
     if(event.type==='status'){if(event.state.includes('종료 후 화자'))this.closing=true;this.state=event.state;this.pending=event.pending;this.lag=event.pendingAudioSeconds??event.lag;if(event.diagnostics)this.diagnostics=event.diagnostics;}
-    if(event.type==='ready'){if(this.meeting.pipelineVersion===2&&this.protocol!==2){this.showError('워커 버전이 맞지 않습니다. 녹음을 중지합니다.');this.stop();return;}this.state='전사 준비 완료';}
+    if(event.type==='ready'){if((this.meeting.pipelineVersion??0)>=2&&this.protocol!==2){this.showError('워커 버전이 맞지 않습니다. 녹음을 중지합니다.');this.stop();return;}this.state='전사 준비 완료';}
     if(event.type==='speaker_refinement'){
       this.writes=this.writes.then(async()=>{
         const meeting=this.meeting;if(!meeting||meeting.id!==expectedSession)return;
@@ -243,7 +259,8 @@ export default class LocalMeeting extends Plugin {
         const backup=structuredClone(meeting);
         const backupPath=join(meeting.directory,`meeting.pre-speaker-${event.passId.slice(0,8)}.json`);
         if(!existsSync(backupPath))await writeFile(backupPath,JSON.stringify(backup,null,2),{flag:'wx'});
-        const expected=this.settings.expectedSpeakers||Object.keys(meeting.speakers).filter(id=>!['unknown','overlap'].includes(id)&&!id.startsWith('final_')).length;
+        splitAlignedSpeakers(meeting,event,doc);
+        const expected=(meeting.speakerCount??this.settings.expectedSpeakers)||Object.keys(meeting.speakers).filter(id=>!['unknown','overlap'].includes(id)&&!id.startsWith('final_')).length;
         const ids=refineSpeakers(meeting,event,expected);
         try{await this.renderSegments(ids,'speaker');}
         catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)this.meeting=backup;throw e;}
@@ -255,6 +272,7 @@ export default class LocalMeeting extends Plugin {
       this.writes=this.writes.then(async()=>{
         const meeting=this.meeting;if(!meeting||meeting.id!==expectedSession)return;
         const view=this.editors.find(meeting.note);if(view&&meeting.noteSnapshot!==undefined)rebaseAnchors(meeting,meeting.noteSnapshot,view.state.doc.toString());
+        if(meeting.pipelineVersion===3&&meeting.speakerPassId){if(event.segment.revision)this.bridge?.command({type:'ack',id:event.segment.id,revision:event.segment.revision});return;}
         const index=meeting.segments.findIndex(s=>s.id===event.segment.id);
         if(index<0&&!event.segment.text.trim()){if(event.segment.revision)this.bridge?.command({type:'ack',id:event.segment.id,revision:event.segment.revision});return;}
         const accepted=acceptRevision(meeting,event.segment),previous=index>=0?meeting.segments[index]:undefined;
@@ -317,8 +335,42 @@ export default class LocalMeeting extends Plugin {
   async reviewUndo(id:string){await this.reviewWrite(async()=>{const m=this.meeting,s=m?.segments.find(x=>x.id===id);if(!m||!s)throw new Error('발언이 없습니다.');await this.editors.ready(m.note);const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 노트가 없습니다.');const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);if(m.noteSnapshot!==undefined)rebaseAnchors(m,m.noteSnapshot,doc);if(m.anchors?.[id]?.locked||m.anchors?.[id]?.deleted)throw new Error('본문 수정이 있어 자동으로 되돌릴 수 없습니다.');const backup=structuredClone(s);try{undoReview(s);await this.renderSegments([id]);}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)m.segments[m.segments.indexOf(s)]=backup;throw e;}this.refresh(true);});}
   async exportDiagnostics(){const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');const target=join(m.directory,'diagnostics.json');await writeFile(target,JSON.stringify({schemaVersion:1,pluginVersion:this.manifest.version,pipelineVersion:m.pipelineVersion??1,session:m.id,diagnostics:this.diagnostics,segments:m.segments.length,review:m.segments.filter(needsReview).length,speakerCounts:m.segments.reduce<Record<string,number>>((counts,s)=>{counts[s.speaker]=(counts[s.speaker]??0)+1;return counts;},{})},null,2));require('electron').shell.showItemInFolder(target);}
   async exportEvaluation(){const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');const target=join(m.directory,'reference-template.json');if(existsSync(target))throw new Error('기존 정답 양식을 덮어쓰지 않습니다. 파일명을 바꾼 뒤 다시 내보내세요.');await writeFile(target,JSON.stringify({schemaVersion:1,instructions:'원음을 듣고 referenceText와 referenceSpeakers를 채우세요. 비어 있는 양식은 정확도 점수를 계산하지 않습니다.',segments:m.segments.map(s=>({id:s.id,start:s.start,end:s.end,hypothesis:s.rawText??s.text,referenceText:null,referenceSpeakers:null}))},null,2),{flag:'wx'});require('electron').shell.showItemInFolder(target);}
+  aiStatus(){return this.auth.status();}
+  aiModels(){return this.auth.models();}
+  aiCancel(){this.auth.cancel();}
+  async aiLogin(add=false){await this.auth.login(add);if(await this.auth.welcome())new ChatGPTWelcomeModal(this.app).open();this.refresh(true);}
+  async aiSelect(id:string){if(this.summaryBusy)throw new Error('AI 정리가 끝난 뒤 계정을 변경해 주세요.');await this.auth.select(id);this.settings.aiModel='';await this.saveAISettings();}
+  async aiLogout(){const revoked=await this.auth.logout();this.settings.aiModel='';await this.saveAISettings();if(!revoked)new Notice('기기에서는 로그아웃했습니다. 원격 연결 해제를 확인하지 못했으므로 ChatGPT 설정에서 앱 접근을 해제할 수 있습니다.',12000);}
+  async saveAISettings(){await this.saveData(this.settings);}
+  private summaryFile(directory:string,sourceHash:string,model:string){return join(directory,`ai-summary-${sourceHash}-${createHash('sha256').update(model).digest('hex').slice(0,8)}.json`);}
+  async currentSummary():Promise<SummaryResult|null>{const m=this.meeting;if(!m?.aiSummary)return null;try{return JSON.parse(await readFile(this.summaryFile(m.directory,m.aiSummary.sourceHash,m.aiSummary.model),'utf8'));}catch{return null;}}
+  async openSummary(){const path=this.meeting?.aiSummary?.note,file=path?this.app.vault.getAbstractFileByPath(path):null;if(!(file instanceof TFile))throw new Error('생성된 정리 노트가 없습니다.');await this.app.workspace.getLeaf(false).openFile(file);}
+  async openCalendarDraft(event:MeetingEvent){const adapter=this.app.vault.adapter as FileSystemAdapter;const raw=createHash('sha256').update(JSON.stringify([this.meeting?.id,this.meeting?.aiSummary?.sourceHash,event])).digest('hex').slice(0,32),uid=raw.slice(0,8)+'-'+raw.slice(8,12)+'-'+raw.slice(12,16)+'-'+raw.slice(16,20)+'-'+raw.slice(20);await openCalendarCandidate(this.app,join(adapter.getBasePath(),this.manifest.dir!,'native/calendar-bridge'),this.settings.calendarId,{...event,uid});}
+  get isAIProcessing(){return this.summaryBusy;}
+  async testAIConnection(){if(this.summaryBusy)throw new Error('AI 정리가 끝난 뒤 연결을 테스트해 주세요.');const models=await this.auth.models();if(!models.length)throw new Error('사용 가능한 모델이 없습니다.');const model=models.some(m=>m.id===this.settings.aiModel)?this.settings.aiModel:models[0]!.id;await requestSummary({sourceHash:'connection-test',started:new Date().toISOString(),document:'연결 확인용 테스트 회의입니다. 결정사항, 할 일, 일정은 없습니다.',sources:[]},model,await this.auth.access());new Notice('OpenAI 로그인·모델 호출·정리 형식 검증에 성공했습니다.',10000);}
+  async generateSummary(automatic=false){
+    if(this.summaryBusy){if(automatic)return;throw new Error('AI 정리가 진행 중입니다.');}
+    const m=this.meeting;if(!m||this.bridge||!m.speakerPassId){if(automatic)return;throw new Error('회의 종료 후 화자 구분이 완료된 뒤 정리할 수 있습니다.');}
+    const status=await this.auth.status();if(!status.planAllowed){if(automatic){this.state='전사 완료 · OpenAI 로그인 필요';this.refresh(true);return;}throw new Error('OpenAI 연결에서 Continue with ChatGPT로 로그인해 주세요.');}
+    this.summaryBusy=true;this.error='';this.state='OpenAI 회의 정리 중';this.refresh(true);
+    try{
+      await this.writes;if(!await this.editors.ready(m.note))throw new Error('편집기가 종료되어 정리를 보류했습니다.');
+      const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 노트가 없습니다.');
+      const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);if(m.noteSnapshot!==undefined)rebaseAnchors(m,m.noteSnapshot,doc);
+      const input=summaryInput(m,doc),models=await this.auth.models();if(!models.length)throw new Error('사용 가능한 ChatGPT 모델이 없습니다.');
+      if(!models.some(x=>x.id===this.settings.aiModel)){this.settings.aiModel=models[0]!.id;await this.saveAISettings();}
+      const model=this.settings.aiModel,target=this.summaryFile(m.directory,input.sourceHash,model);let result:SummaryResult|undefined;
+      if(existsSync(target)){const cached=JSON.parse(await readFile(target,'utf8'));if(cached.sourceHash===input.sourceHash&&cached.model===model)result=cached;}
+      if(!result){result=await requestSummary(input,model,await this.auth.access());await writeFile(target+'.tmp',JSON.stringify(result,null,2),{mode:0o600});await rename(target+'.tmp',target);}
+      const current=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file),stale=summaryInput(m,current).sourceHash!==input.sourceHash;
+      const modelTag=createHash('sha256').update(model).digest('hex').slice(0,4),note=normalizePath(join(dirname(m.note),`${basename(m.note,'.md')} - AI 정리 (${input.sourceHash.slice(0,8)} ${modelTag}).md`));
+      if(!this.app.vault.getAbstractFileByPath(note))await this.app.vault.create(note,summaryMarkdown(result,input,m.note,stale));
+      m.aiSummary={sourceHash:input.sourceHash,note,model,created:result.created,stale};await this.saveMeeting();
+      this.state=stale?'AI 정리 완료 · 이후 원문 변경 있음':'AI 정리 완료';new Notice(stale?'AI 정리 노트를 만들었습니다. 처리 중 바뀐 내용은 다음 정리에 반영할 수 있습니다.':'요약·할 일·일정 후보를 별도 노트에 정리했습니다.');
+    }catch(e){this.state='AI 정리 실패 · 다시 시도 가능';throw e;}finally{this.summaryBusy=false;this.refresh(true);}
+  }
   stop(){if(this.bridge&&!this.closing){this.closing=true;this.state='녹음 종료 요청 / 남은 전사 처리';this.bridge.stop();this.refresh();}}
-  onunload(){this.editors?.dispose();window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.overlay?.remove();}
+  onunload(){this.editors?.dispose();window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.auth?.cancel();this.overlay?.remove();}
 }
 function participantLabel(id:string,meeting:Meeting){return speakerName({id:'',speaker:id,text:'',start:0,end:0},meeting.speakers);}
 class ParticipantModal extends Modal {
@@ -334,7 +386,7 @@ class MeetingView extends ItemView {
   async onOpen(){this.render();}
   render(force=false){
     const p=this.plugin,meeting=p.meeting,active=p.app.workspace.getActiveFile(),ready=active instanceof TFile&&active.extension==='md';
-    if(this.recordEl){const key=p.isStopping?'stopping':p.bridge?'recording':'idle';if(this.recordEl.dataset.state!==key){this.recordEl.dataset.state=key;setIcon(this.recordIcon!,p.bridge?'square':'mic');this.recordLabel!.setText(p.isStopping?'남은 발언 처리 중…':p.bridge?'녹음 종료':'현재 노트에 녹음 시작');this.recordEl.toggleClass('mod-cta',!p.bridge);}this.recordEl.disabled=p.isStopping||(!p.bridge&&!ready);}
+    if(this.recordEl){const key=p.isStopping?'stopping':p.bridge?'recording':'idle';if(this.recordEl.dataset.state!==key){this.recordEl.dataset.state=key;setIcon(this.recordIcon!,p.bridge?'square':'mic');this.recordLabel!.setText(p.isStopping?'남은 발언 처리 중…':p.bridge?'녹음 종료':'현재 노트에 녹음 시작');this.recordEl.toggleClass('mod-cta',!p.bridge);}this.recordEl.disabled=p.isStopping||p.isAIProcessing||(!p.bridge&&!ready);}
     this.editingHint?.setText(p.typingPaused?'한글 조합 중 · 입력이 끝나면 전사를 반영합니다.':'전사 중에도 필기할 수 있습니다. 커서와 직접 수정한 내용은 유지됩니다.');
     this.stateEl?.setText(p.state);this.queueEl?.setText(`${p.pending}개`);this.lagEl?.setText(`${p.lag.toFixed(0)}초`);
     const diag=p.diagnostics;const diagnosticText=typeof diag.device==='string'?`${diag.device} · ${diag.sampleRate??16000}Hz · ${diag.channels??1}채널\n입력 ${diag.rmsDbfs??'—'}dBFS · 클리핑 ${diag.clippedSamples??0}샘플 · 입력 오류 ${diag.inputErrors??0}`:'녹음을 시작하면 입력 장치와 레벨을 확인할 수 있습니다.';
@@ -346,13 +398,14 @@ class MeetingView extends ItemView {
     const folds=new Map(Array.from(container.querySelectorAll<HTMLDetailsElement>('details')).map(d=>[d.dataset.section,d.open]));container.empty();container.addClass('lm-panel');
     const heading=container.createDiv({cls:'lm-panel-heading'});heading.createEl('h3',{text:'회의록'});const minimize=heading.createEl('button',{cls:'lm-icon-button',attr:{'aria-label':'상세 보기 최소화',title:'최소화 · ⌘⌥M'}});setIcon(minimize,'minimize-2');minimize.addEventListener('click',()=>{void p.toggleControls();});
     const status=container.createDiv({cls:'lm-session-state'+(p.bridge?' is-running':'')});status.createSpan({cls:'lm-connection-dot'});this.stateEl=status.createSpan({text:p.state,attr:{role:'status','aria-live':'polite'}});
-    const record=container.createEl('button',{cls:'lm-primary-control'+(!p.bridge?' mod-cta':''),attr:{title:'⌘⇧M'}});this.recordEl=record;record.dataset.state=p.isStopping?'stopping':p.bridge?'recording':'idle';this.recordIcon=record.createSpan();setIcon(this.recordIcon,p.bridge?'square':'mic');this.recordLabel=record.createSpan({text:p.isStopping?'남은 발언 처리 중…':p.bridge?'녹음 종료':'현재 노트에 녹음 시작'});record.disabled=p.isStopping||(!p.bridge&&!ready);record.addEventListener('click',()=>p.toggleRecording());
+    const record=container.createEl('button',{cls:'lm-primary-control'+(!p.bridge?' mod-cta':''),attr:{title:'⌘⇧M'}});this.recordEl=record;record.dataset.state=p.isStopping?'stopping':p.bridge?'recording':'idle';this.recordIcon=record.createSpan();setIcon(this.recordIcon,p.bridge?'square':'mic');this.recordLabel=record.createSpan({text:p.isStopping?'남은 발언 처리 중…':p.bridge?'녹음 종료':'현재 노트에 녹음 시작'});record.disabled=p.isStopping||p.isAIProcessing||(!p.bridge&&!ready);record.addEventListener('click',()=>p.toggleRecording());
     const target=container.createDiv({cls:'lm-recording-target'});if(p.bridge&&meeting){target.createSpan({text:'기록 중인 노트 · '});const note=target.createEl('button',{text:meeting.note.split('/').pop()?.replace(/\.md$/,'')??meeting.note});note.addEventListener('click',()=>{const f=p.app.vault.getAbstractFileByPath(meeting.note);if(f instanceof TFile)void p.app.workspace.getLeaf(false).openFile(f);});}else target.setText(ready?`시작하면 ‘${active.basename}’에 기록합니다.`:'기록할 Markdown 노트를 먼저 열어 주세요.');
     this.editingHint=container.createDiv({cls:'lm-hint',attr:{role:'status','aria-live':'polite'}});this.editingHint.setText(p.typingPaused?'한글 조합 중 · 입력이 끝나면 전사를 반영합니다.':'전사 중에도 필기할 수 있습니다. 커서와 직접 수정한 내용은 유지됩니다.');
     const metrics=container.createDiv({cls:'lm-metrics'});const queue=metrics.createDiv({cls:'lm-metric'});this.queueEl=queue.createEl('strong',{text:`${p.pending}개`});queue.createSpan({text:'처리 대기'});const lag=metrics.createDiv({cls:'lm-metric'});this.lagEl=lag.createEl('strong',{text:`${p.lag.toFixed(0)}초`});lag.createSpan({text:'미처리 오디오 범위'});
     if(p.error){const error=container.createDiv({cls:'lm-error',attr:{role:'alert'}});error.setText(p.error);}
     new Setting(container).setName('발언 시간 표시').addToggle(t=>t.setValue(p.settings.showTime).onChange(()=>{void p.guard(()=>p.toggleTime());}));
     const quick=container.createDiv({cls:'lm-quick-actions'});quick.createEl('button',{text:'캘린더 열기',attr:{title:'⌘⌥C'}}).addEventListener('click',()=>p.openCalendar());quick.createEl('button',{text:'할 일 추가'}).addEventListener('click',()=>new TaskModal(this.app).open());
+    quick.createEl('button',{text:'OpenAI 정리'}).addEventListener('click',()=>new AIControlsModal(this.app,p).open());
     quick.createEl('button',{text:`회의 사전 · ${p.settings.dictionaryEnabled?'켜짐':'꺼짐'}`}).addEventListener('click',()=>new DictionaryModal(this.app,p).open());
     quick.createEl('button',{text:`발언 검토 · ${meeting?.segments.filter(needsReview).length??0}개`}).addEventListener('click',()=>new ReviewModal(this.app,p).open());
     if(meeting?.speakerRefinement)container.createEl('p',{text:meeting.speakerRefinement.warning||`종료 후 검출: ${meeting.speakerRefinement.detected}개 화자 군집`,cls:meeting.speakerRefinement.warning?'lm-error':'lm-hint',attr:{role:meeting.speakerRefinement.warning?'status':'note'}});
@@ -360,8 +413,8 @@ class MeetingView extends ItemView {
     if(meeting){
       const title=container.createDiv({cls:'lm-section-title'});title.createSpan({text:'참여자'});const add=title.createEl('button',{cls:'lm-icon-button',attr:{'aria-label':'참여자 추가',title:'참여자 추가'}});setIcon(add,'user-plus');add.addEventListener('click',()=>new ParticipantModal(this.app,p).open());
       container.createEl('p',{text:p.settings.diarModel&&p.settings.diarLibrary?'익명 화자에 이름을 연결합니다. 참여자 추가는 음성 표본 등록과 다릅니다. 음성 등록은 후속 기능입니다.':'자동 화자 구분 모델을 설정에서 연결해 주세요.',cls:'lm-hint'});
-      const ids=[...new Set([...meeting.segments.map(s=>s.speaker),...Object.keys(meeting.speakers)])].filter(id=>id!=='unknown'&&id!=='overlap');
-      if(!ids.length)container.createEl('p',{text:'첫 발언이 처리되면 참여자가 표시됩니다.',cls:'lm-hint'});
+      const ids=[...new Set([...meeting.segments.map(s=>s.speaker),...Object.keys(meeting.speakers)])].filter(id=>id!=='unknown'&&id!=='overlap'&&id!=='pending');
+      if(!ids.length)container.createEl('p',{text:'회의 종료 후 화자 구분이 끝나면 참여자가 표시됩니다.',cls:'lm-hint'});
       for(const [index,id] of ids.entries()){const row=container.createDiv({cls:'lm-participant-row'});row.createSpan({text:id.startsWith('final_')?'새 군집':`이름 ${index+1}`,cls:'lm-participant-label'});const input=row.createEl('input',{type:'text',value:participantLabel(id,meeting),attr:{'aria-label':`참여자 ${index+1} 이름`,maxlength:'60'}});const save=row.createEl('button',{cls:'lm-icon-button',attr:{'aria-label':`참여자 ${index+1} 이름 저장`,title:'이름 저장 · Enter'}});setIcon(save,'check');const apply=()=>{if(!input.value.trim()){new Notice('화자 이름을 입력해 주세요.');input.focus();return;}p.updateSpeaker(id,input.value);new Notice('화자 이름을 저장했습니다.');};save.addEventListener('click',apply);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();apply();}});}
       const details=container.createEl('details');details.dataset.section='speakers';details.open=folds.get('speakers')??false;details.createEl('summary',{text:`발언별 화자 수정 · 최근 ${Math.min(20,meeting.segments.length)}개`});details.createEl('p',{text:'다르게 구분된 발언의 화자를 선택하면 노트에도 반영됩니다.',cls:'lm-hint'});
       for(const segment of meeting.segments.slice(-20).reverse()){const row=details.createDiv({cls:'lm-utterance'});row.createEl('p',{text:`${p.settings.showTime?timestamp(segment.start)+' · ':''}${participantLabel(segment.speaker,meeting)}: ${segment.text}`});const select=row.createEl('select',{attr:{'aria-label':`발언 화자 변경: ${segment.text.slice(0,35)}`}});for(const id of ['unknown',...ids,'overlap'])select.createEl('option',{value:id,text:participantLabel(id,meeting)});select.createEl('option',{value:'__new__',text:'+ 새 참여자 추가'});select.value=segment.speaker;select.addEventListener('change',()=>{if(select.value==='__new__'){select.value=segment.speaker;new ParticipantModal(this.app,p,id=>p.assignSpeaker(segment.id,id)).open();}else p.assignSpeaker(segment.id,select.value);});}
@@ -375,13 +428,14 @@ class MeetingSettings extends PluginSettingTab {
   constructor(app:App,private plugin:LocalMeeting){super(app,plugin);}
   display(){
     this.containerEl.empty();this.containerEl.createEl('h2',{text:'로컬 회의록 설정'});
-    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'finalizeSpeakers'|'expectedSpeakers'>,string,string][]=[['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
+    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'finalizeSpeakers'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
     this.containerEl.createEl('p',{text:'녹음과 모델 처리는 이 Mac에서 실행합니다. 마이크 입력과 저장 위치를 확인하세요.',cls:'lm-hint'});
-    const configured=existsSync(this.plugin.settings.model)&&existsSync(this.plugin.settings.diarModel)&&existsSync(this.plugin.settings.diarLibrary);
+    const configured=existsSync(this.plugin.settings.model)&&existsSync(this.plugin.settings.communityPython)&&existsSync(this.plugin.settings.communityModel)&&existsSync(this.plugin.settings.alignerModel);
     this.containerEl.createEl('p',{text:configured?'STT · 화자 구분 모델 파일이 준비되어 있습니다.':'모델 경로를 확인해 주세요. 아래에서 로컬 파일을 연결할 수 있습니다.',cls:configured?'lm-hint':'lm-error'});
     const basic=this.containerEl.createDiv();new Setting(basic).setName('같은 화자 문단 나누기').setDesc('말 사이의 빈 구간이 이 시간 이상이면 새 문단으로 기록합니다. 새 회의부터 적용합니다.').addDropdown(d=>d.addOptions({'2':'2초','2.5':'2.5초 (기본)','3':'3초'}).setValue(String(this.plugin.settings.paragraphPauseSeconds)).onChange(async v=>{this.plugin.settings.paragraphPauseSeconds=Number(v);await this.plugin.saveData(this.plugin.settings);}));const advanced=this.containerEl.createEl('details');advanced.open=!configured;advanced.createEl('summary',{text:'로컬 모델 · 실행 환경 설정'});
-    new Setting(basic).setName('회의 종료 후 화자 재분석').setDesc('Nemotron 종료 후 설정으로 다시 구분합니다. 수정한 이름·대사·필기를 보존합니다. 새 회의부터 적용합니다.').addToggle(t=>t.setValue(this.plugin.settings.finalizeSpeakers).onChange(async v=>{this.plugin.settings.finalizeSpeakers=v;await this.plugin.saveData(this.plugin.settings);}));
-    new Setting(basic).setName('예상 발언 인원').setDesc('검출 인원이 부족하면 경고합니다. 인원 수를 강제로 맞추거나 목소리를 학습시키는 설정은 아닙니다.').addDropdown(d=>{d.addOption('0','지정 안 함');for(let i=1;i<=8;i++)d.addOption(String(i),`${i}명`);d.setValue(String(this.plugin.settings.expectedSpeakers)).onChange(async v=>{this.plugin.settings.expectedSpeakers=Number(v);await this.plugin.saveData(this.plugin.settings);});});
+    new Setting(basic).setName('이전 회의의 Nemotron 후처리').setDesc('이 설정은 이전 방식 세션 복구에만 적용됩니다. 새 회의는 Community-1/MPS를 사용합니다.').addToggle(t=>t.setValue(this.plugin.settings.finalizeSpeakers).onChange(async v=>{this.plugin.settings.finalizeSpeakers=v;await this.plugin.saveData(this.plugin.settings);}));
+    new Setting(basic).setName('예상 발언 인원').setDesc('회의 시작 창의 기본값입니다. Community-1의 최대 화자 수 또는 고정 화자 수로 적용합니다.').addDropdown(d=>{d.addOption('0','지정 안 함');for(let i=1;i<=32;i++)d.addOption(String(i),`${i}명`);d.setValue(String(this.plugin.settings.expectedSpeakers)).onChange(async v=>{this.plugin.settings.expectedSpeakers=Number(v);await this.plugin.saveData(this.plugin.settings);});});
+    new Setting(basic).setName('OpenAI 요약·할 일·일정').setDesc('브라우저에서 ChatGPT 계정을 연결합니다. 요약에는 회의 텍스트가 전송됩니다.').addButton(b=>b.setButtonText('OpenAI 연결 및 정리').onClick(()=>new AIControlsModal(this.app,this.plugin).open()));
     for(const [key,name,description] of fields)new Setting(['storage','device'].includes(key)?basic:advanced).setName(name).setDesc(description).addText(t=>t.setValue(this.plugin.settings[key]).onChange(async value=>{this.plugin.settings[key]=value;await this.plugin.saveData(this.plugin.settings);}));
   }
 }

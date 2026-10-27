@@ -4,12 +4,13 @@ import {parseEvent,WorkerEvent} from './model';
 export class WorkerBridge {
   private child?:ChildProcessWithoutNullStreams;
   constructor(private event:(event:WorkerEvent)=>void,private exit:()=>void) {}
-  start(python:string,script:string,model:string,directory:string,resume:boolean,device:string,inputWav?:string,diarModel?:string,diarLibrary?:string,quality=false,refineOnly=false) {
+  start(python:string,script:string,model:string,directory:string,resume:boolean,device:string,inputWav?:string,diarModel?:string,diarLibrary?:string,quality=false,refineOnly=false,community?:{python:string;model:string;aligner:string;count?:number;mode?:string}) {
     if(this.child) throw new Error('이미 실행 중입니다.');
     const args=['-u',script,'--model',model,'--session',directory];
     if(resume) args.push('--resume');
     if(quality)args.push('--quality');
     if(refineOnly)args.push('--refine-only');
+    if(community){args.push('--community-python',community.python,'--community-model',community.model);if(community.aligner)args.push('--aligner-model',community.aligner);if(community.count!==undefined)args.push('--speaker-count',String(community.count),'--speaker-count-mode',community.mode??'maximum');}
     if(inputWav) args.push('--input-wav',inputWav);
     if(diarModel&&diarLibrary)args.push('--diar-model',diarModel,'--diar-library',diarLibrary);
     if(device.trim()) {

@@ -9,7 +9,7 @@ const code=buildSync({entryPoints:['src/main.ts'],bundle:true,write:false,platfo
 class Base {app:unknown;manifest={version:'test'};constructor(app:unknown){this.app=app;}}
 function setup(){
  const module:{exports:any}={exports:{}};
- runInNewContext(code,{module,exports:module.exports,require:(id:string)=>id==='obsidian'?{Plugin:Base,PluginSettingTab:Base,ItemView:Base,Modal:Base,Notice:Base}:requireFromRepo(id),structuredClone,Buffer,setTimeout,clearTimeout,window:{setTimeout,clearTimeout}});
+ runInNewContext(code,{module,exports:module.exports,require:(id:string)=>id==='obsidian'?{Plugin:Base,PluginSettingTab:Base,ItemView:Base,Modal:Base,Notice:Base}:requireFromRepo(id),structuredClone,Buffer,TextEncoder,TextDecoder,URL,setTimeout,clearTimeout,window:{setTimeout,clearTimeout}});
  const p:any=new module.exports.default({});const commands:unknown[]=[];const errors:string[]=[];
  p.editors={find:()=>undefined};p.refresh=()=>{};p.showError=(e:string)=>errors.push(e);p.bridge={command:(c:unknown)=>commands.push(c)};
  p.meeting={id:'session',note:'test.md',directory:'/tmp/test',speakers:{},segments:[{id:'u_1',start:0,end:1000,text:'원문',speaker:'speaker_1',revision:1}],rendered:{},started:''};

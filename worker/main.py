@@ -144,18 +144,31 @@ if __name__=='__main__':
     parser.add_argument('--diar-library')
     parser.add_argument('--quality',action='store_true')
     parser.add_argument('--refine-only',action='store_true')
+    parser.add_argument('--community-python')
+    parser.add_argument('--community-model')
+    parser.add_argument('--aligner-model')
+    parser.add_argument('--speaker-count',type=int)
+    parser.add_argument('--speaker-count-mode',choices=['maximum','exact'])
     parser.add_argument('--realtime-input',action='store_true',help='Test WAV replay at capture speed (quality pipeline only)')
     args=parser.parse_args()
     try:
         if args.refine_only:
             from finalize_diarization import finalize
             emit({'type':'hello','session':Path(args.session).name,'protocol':2,'features':['speaker_refinement']})
-            finalize(args.session,args.diar_library,args.diar_model,emit)
+            if args.community_python:
+                from community_pipeline import finalize as community_finalize
+                community_finalize(args.session,args,emit)
+            else:finalize(args.session,args.diar_library,args.diar_model,emit)
             emit({'type':'stopped','session':Path(args.session).name})
             sys.exit(0)
         if args.resume:
             recovery=Store(args.session); recovery.recover(); recovery.retry(); recovery.close()
         if args.quality:
+            config_path=Path(args.session)/'pipeline.json'
+            config=json.loads(config_path.read_text()) if config_path.exists() else {}
+            if config.get('workflow')=='text-then-community':
+                from text_worker import run as text_run
+                sys.exit(text_run(args,emit))
             from quality_worker import run as quality_run
             sys.exit(quality_run(args,emit))
         sys.exit(run(args))

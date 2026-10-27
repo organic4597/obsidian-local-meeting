@@ -22,3 +22,22 @@ class PauseHistory:
         with self.path.open('rb') as f:f.seek(lo);quiet=np.frombuffer(f.read(hi-lo),np.uint8)
         edges=np.diff(np.r_[False,quiet!=0,False].astype(np.int8))
         return [((lo+a)*self.step,(lo+b)*self.step) for a,b in zip(np.flatnonzero(edges==1),np.flatnonzero(edges==-1)) if (b-a)*self.step>=minimum-1e-6]
+
+    def plan(self,start,available,finished=False,max_seconds=20,silence=.9):
+        """Endpoint-only STT plan: (audio start, audio end, consumed until, closed).
+        Quiet detection only plans work; the continuous source WAV is never trimmed.
+        """
+        if available-start<=.02:return None
+        lo=max(0,math.floor(start/self.step));hi=math.floor(min(available,start+max_seconds+silence+1)/self.step)
+        with self.path.open('rb') as f:f.seek(lo);quiet=np.frombuffer(f.read(max(0,hi-lo)),np.uint8)
+        speech=np.flatnonzero(quiet==0)
+        if not len(speech):return (start,start,available if finished else max(start,available-.15),True)
+        a=max(start,(lo+int(speech[0]))*self.step-.1)
+        pauses=self.pauses(a,min(available,a+max_seconds+silence),silence)
+        for x,y in pauses:
+            if x>=a+.18 and x<=a+max_seconds:return a,min(x+.1,available),max(x+.1,y-.1),True
+        if available>=a+max_seconds+silence:return a,a+max_seconds,a+max_seconds,True
+        if finished:
+            b=min(available,(lo+int(speech[-1])+1)*self.step+.1,a+max_seconds)
+            return a,b,available if b>=available-.15 else b,True
+        return a,min(available,a+max_seconds),start,False

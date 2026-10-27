@@ -1,6 +1,6 @@
 {
   "name": "obsidian-local-meeting",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
@@ -9,12 +9,15 @@
     "test:worker": ".venv/bin/python -m unittest discover -s tests -p 'test_*.py'"
   },
   "devDependencies": {
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
     "obsidian": "1.14.4",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0",
-    "@codemirror/state": "6.7.6",
-    "@codemirror/view": "6.43.13"
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "jose": "^6.2.3"
   }
 }
