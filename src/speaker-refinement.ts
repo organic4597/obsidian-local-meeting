@@ -1,3 +1,4 @@
+import {isUnconfirmedSpeaker} from './meeting-presentation';
 import {Meeting,Segment,SpeakerRefinement,SpeakerTurn} from './model';
 
 const known=(id:string)=>!['unknown','overlap','pending'].includes(id);
@@ -22,7 +23,7 @@ function align(weights:number[][]){
 }
 export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0){
  if(meeting.speakerPassId===pass.passId)return [];
- const clusters=[...new Set(pass.turns.map(t=>t.speaker))].sort(),old=[...new Set(meeting.segments.map(s=>s.speaker).filter(known))].sort((a,b)=>meeting.segments.filter(s=>s.speaker===b).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)-meeting.segments.filter(s=>s.speaker===a).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)).slice(0,32);
+ const clusters=[...new Set(pass.turns.map(t=>t.speaker))].sort(),old=[...new Set(meeting.segments.map(s=>s.speaker).filter(id=>known(id)&&!isUnconfirmedSpeaker(meeting,id)))].sort((a,b)=>meeting.segments.filter(s=>s.speaker===b).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)-meeting.segments.filter(s=>s.speaker===a).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)).slice(0,32);
  const spans=new Map(meeting.segments.map(s=>[s.id,evidence(pass.turns,s.start,s.end)]));
  // A user-assigned speaker is a strong anchor, but an edited paragraph is kept intact below.
  const weights=clusters.map(c=>old.map(id=>meeting.segments.filter(s=>s.speaker===id).reduce((sum,s)=>sum+(spans.get(s.id)!.single.get(c)??0)*(s.speakerLocked?10:1),0)));
@@ -32,20 +33,24 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
   const row=weights[i]!,total=row.reduce((a,b)=>a+b,0);
   if(total&&row[j]!/total>=.65)mapping.set(clusters[i]!,old[j]!);
  }
+ const hasPeople=Object.keys(meeting.speakers).some(id=>!isUnconfirmedSpeaker(meeting,id));
  for(const c of clusters)if(!mapping.has(c)){
   // A split cluster must get its own slot instead of inheriting the same old name twice.
-  const id=`final_${pass.passId.slice(0,32)}_${c}`;mapping.set(c,id);meeting.speakers[id]??=`${old.length?'새 화자':'화자'} ${clusters.indexOf(c)+1}`;
+  const id=hasPeople?`candidate_${pass.passId.slice(0,16)}_${c}`:`auto_${c}`;mapping.set(c,id);
+  if(hasPeople){meeting.speakerCandidates??={};meeting.speakerCandidates[id]={label:`미확정 음성 그룹 ${clusters.indexOf(c)+1}`,passId:pass.passId};}
+  else meeting.speakers[id]??=`화자 ${clusters.indexOf(c)+1}`;
  }
  const changed:string[]=[];
  for(const s of meeting.segments){
   const anchor=meeting.anchors?.[s.id];
   if(s.speakerLocked||anchor?.locked&&anchor.speakerShown!==false||anchor?.deleted)continue;
   const e=spans.get(s.id)!,best=[...e.single].sort((a,b)=>b[1]-a[1])[0];
-  const speaker=e.overlap>=200?'overlap':best&&!conflicts.has(best[0])&&best[1]/Math.max(1,e.speech)>=.85?mapping.get(best[0])!:'unknown';
+  const match=best?mapping.get(best[0]):undefined;
+  const speaker=e.overlap>=200?'overlap':best&&!conflicts.has(best[0])&&best[1]/Math.max(1,e.speech)>=.85?match?.startsWith('candidate_')?'unknown':match!:'unknown';
   const reasons=(s.reviewReasons??[]).filter(x=>!['화자 활동 근거 부족','화자 전환 경계 확인 필요','동시 활성 발언 확인 필요'].includes(x));
   if(speaker==='unknown')reasons.push('종료 후 화자 경계 확인 필요');
   if(speaker==='overlap')reasons.push('종료 후 동시 발언 확인 필요');
-  if(speaker.startsWith('final_'))reasons.push('새로 분리된 화자 이름 확인 필요');
+  if(match?.startsWith('candidate_'))reasons.push('미확정 음성 그룹 연결 가능');
   if(best&&conflicts.has(best[0]))reasons.push('사용자 지정 화자가 하나로 합쳐진 구간 확인 필요');
   if(s.speaker!==speaker)s.reviewedRevision=undefined;
   s.speaker=speaker;s.speakerState=speaker==='overlap'?'overlap':speaker==='unknown'?'unknown':'single';

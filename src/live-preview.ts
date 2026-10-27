@@ -13,7 +13,7 @@ export function refinePreview(meeting:Meeting,pass:SpeakerRefinement,expected=0)
  const copy=structuredClone(meeting);copy.rendered={};copy.anchors={};copy.noteSnapshot='';
  const doc=transcriptChanges('',copy,copy.segments.map(s=>s.id)).text;
  splitAlignedSpeakers(copy,pass,doc);refineSpeakers(copy,pass,expected);
- meeting.segments=copy.segments;meeting.speakers=copy.speakers;meeting.originalSegments=copy.originalSegments;
+ meeting.segments=copy.segments;meeting.speakers=copy.speakers;meeting.speakerCandidates=copy.speakerCandidates;meeting.originalSegments=copy.originalSegments;
  meeting.speakerPassId=copy.speakerPassId;meeting.speakerRefinement=copy.speakerRefinement;meeting.transcriptMode=copy.transcriptMode;
  meeting.presentation='committing';
 }

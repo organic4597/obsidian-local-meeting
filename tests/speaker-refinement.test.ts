@@ -9,7 +9,7 @@ const pass=(turns:SpeakerRefinement['turns']):SpeakerRefinement=>({type:'speaker
 test('an additional offline cluster cannot inherit the same existing name',()=>{
  const meeting=m([s('a',0,6000),s('b',6000,10000)]),event=pass([{start:0,end:6000,speaker:'offline_1'},{start:6000,end:10000,speaker:'offline_2'}]);
  const before=meeting.segments.map(x=>({...x}));refineSpeakers(meeting,event,7);
- assert.equal(meeting.segments[0]!.speaker,'speaker_1');assert.notEqual(meeting.segments[1]!.speaker,'speaker_1');assert.match(meeting.speakers[meeting.segments[1]!.speaker]!,/새 화자/);assert.equal(meeting.speakers.speaker_1,'기존 이름');
+ assert.equal(meeting.segments[0]!.speaker,'speaker_1');assert.notEqual(meeting.segments[1]!.speaker,'speaker_1');assert.equal(meeting.segments[1]!.speaker,'unknown');assert.equal(Object.keys(meeting.speakers).length,1);assert.equal(Object.keys(meeting.speakerCandidates??{}).length,1);assert.equal(meeting.speakers.speaker_1,'기존 이름');
  meeting.segments.forEach((x,i)=>{assert.equal(x.text,before[i]!.text);assert.equal(x.start,before[i]!.start);assert.equal(x.end,before[i]!.end);assert.equal(x.revision,1);});
  assert.match(meeting.speakerRefinement!.warning,/예상 7명 중 2개/);assert.deepEqual(refineSpeakers(meeting,event,7),[]);
 });
