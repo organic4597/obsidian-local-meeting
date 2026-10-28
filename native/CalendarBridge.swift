@@ -38,7 +38,7 @@ func run(_ request:[String:Any]) async throws -> [String:Any]{
  if let eventId=request["eventId"] as? String,let event=store.event(withIdentifier:eventId){guard event.notes?.contains(marker)==true else{throw Failure.message("이 플러그인에서 만든 일정만 갱신할 수 있습니다.")};existing=event}
  if existing==nil {existing=store.events(matching:store.predicateForEvents(withStart:start.addingTimeInterval(-86400),end:end.addingTimeInterval(86400),calendars:[calendar])).first{$0.notes?.contains(marker)==true}}
  let event=existing ?? EKEvent(eventStore:store)
- event.calendar=calendar;event.location=request["location"] as? String;event.title=title;event.startDate=start;event.endDate=end;event.notes=(request["notes"] as? String ?? "")+"\n\n"+marker
+ event.calendar=calendar;event.location=request["location"] as? String;event.title=title;event.isAllDay=(request["allDay"] as? Bool) ?? false;if event.isAllDay {event.timeZone=TimeZone(identifier:"Asia/Seoul")};event.startDate=start;event.endDate=end;event.notes=(request["notes"] as? String ?? "")+"\n\n"+marker
  try store.save(event,span:.thisEvent,commit:true)
  return ["eventId":event.eventIdentifier ?? "","calendarId":calendar.calendarIdentifier,"uid":uid,"saved":true]
 }

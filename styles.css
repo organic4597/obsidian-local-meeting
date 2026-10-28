@@ -160,3 +160,8 @@
 .lm-audio-modal { width: min(480px, 92vw); }
 .lm-audio-modal audio { width: 100%; margin-block: 12px; }
 .lm-audio-range-title { font-size: var(--font-ui-large); font-variant-numeric: tabular-nums; margin-block: 6px 12px; }
+.lm-review-group .lm-event-candidate > div { flex: 1 1 240px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.lm-review-group .lm-event-candidate > div > input:first-child { flex: 1 1 100%; min-width: 0; }
+.lm-review-group .lm-event-candidate > div > p { flex-basis: 100%; margin: 2px 0; }
+.lm-review-group .lm-event-candidate > div > small { flex-basis: 100%; }
+@media (max-width: 720px) { .lm-review-group .lm-event-candidate { flex-wrap: wrap; } .lm-review-group .lm-event-candidate > div { flex-basis: 100%; } }
