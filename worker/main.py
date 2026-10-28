@@ -33,6 +33,7 @@ if __name__=='__main__':
     p=argparse.ArgumentParser()
     p.add_argument('--model',required=True);p.add_argument('--session',required=True)
     p.add_argument('--device',type=int);p.add_argument('--chunk-seconds',type=int,default=2,choices=range(2,16))
+    p.add_argument('--system-audio-helper');p.add_argument('--system-audio-pid',type=int)
     p.add_argument('--resume',action='store_true');p.add_argument('--legacy-resume',action='store_true');p.add_argument('--input-wav')
     p.add_argument('--refine-only',action='store_true');p.add_argument('--community-python');p.add_argument('--community-model');p.add_argument('--aligner-model')
     p.add_argument('--speaker-count',type=int);p.add_argument('--speaker-count-mode',choices=['maximum','exact'])

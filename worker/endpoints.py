@@ -31,7 +31,10 @@ class PauseHistory:
         lo=max(0,math.floor(start/self.step));hi=math.floor(min(available,start+max_seconds+silence+1)/self.step)
         with self.path.open('rb') as f:f.seek(lo);quiet=np.frombuffer(f.read(max(0,hi-lo)),np.uint8)
         speech=np.flatnonzero(quiet==0)
-        if not len(speech):return (start,start,available if finished else max(start,available-.15),True)
+        if not len(speech):
+            consumed=available if finished else max(start,available-.15)
+            if consumed<=start+1e-6:return None
+            return (start,start,consumed,True)
         a=max(start,(lo+int(speech[0]))*self.step-.1)
         pauses=self.pauses(a,min(available,a+max_seconds+silence),silence)
         for x,y in pauses:

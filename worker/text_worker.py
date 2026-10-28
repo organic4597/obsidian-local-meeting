@@ -21,7 +21,12 @@ def run(args,emit):
     emit({'type':'hello','session':root.name,'protocol':2,'features':['dictionary','revisions','ack','text-only','community-after-stop']})
     for s in revisions.all():emit({'type':'segment','session':root.name,'segment':s})
     saved=revisions.all();done=args.resume and not store.status()['pending'] and saved and all(s.get('textState')=='stable' for s in saved)
-    audio=queue.Queue();inbox=queue.Queue();cap=Capture(root,audio.put,device=args.device,seconds=args.chunk_seconds);hints=PauseHistory(root)
+    audio=queue.Queue();inbox=queue.Queue()
+    if getattr(args,'system_audio_helper',None) and not args.resume and not args.input_wav:
+        from system_capture import SystemCapture
+        cap=SystemCapture(root,audio.put,helper=args.system_audio_helper,app_pid=args.system_audio_pid,device=args.device,seconds=args.chunk_seconds)
+    else:cap=Capture(root,audio.put,device=args.device,seconds=args.chunk_seconds)
+    hints=PauseHistory(root)
     realtime=getattr(args,'realtime_input',False);stopped=args.resume or bool(args.input_wav) and not realtime;session=None;failed=False;times=[];fed=set();cursor=committed_cursor(saved,revisions.get('cursor',0));pending_dictionary=None
     def commands():
         for line in sys.stdin:
@@ -76,6 +81,7 @@ def run(args,emit):
                     if not plan:break
                     a,b,consumed,closed=plan
                     if not closed:break
+                    if max(consumed,b)<=cursor+1e-6:break
                     if pending_dictionary and a>=pending_dictionary[1]-.01:
                         dictionary=pending_dictionary[0];pending_dictionary=None;context=context_text(dictionary,session.tokenizer.encode);config['dictionary']=dictionary;write_atomic(config_path,config);write_atomic(root/'dictionary-snapshot.json',dictionary);emit({'type':'config_applied','session':root.name,'revision':dictionary['revision'],'afterSample':round(a*16000)})
                     if b-a>=.18:

@@ -1,3 +1,4 @@
 mlx-qwen3-asr==0.4.4
 sounddevice==0.5.5
 soynlp==0.0.493
+scipy>=1.13,<2

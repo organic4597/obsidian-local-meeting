@@ -4,8 +4,10 @@ import {promisify} from 'node:util';
 import {existsSync} from 'node:fs';
 import {join,isAbsolute,dirname,basename} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
+import {release as osRelease} from 'node:os';
 import {mkdir,writeFile,readFile,rename,copyFile,readdir} from 'node:fs/promises';
-import {SummaryAudioIndex} from './summary-playback';
+import {SummaryAudioIndex,playbackRanges} from './summary-playback';
+import {SummaryReviewStore,ReviewItem} from './summary-review';
 import {SummaryAudio} from './summary-audio-ui';
 import {Meeting,WorkerEvent,rebaseAnchors,migrateMeeting,speakerName,timestamp} from './model';
 import {WorkerBridge} from './bridge';
@@ -21,11 +23,11 @@ import {refineSpeakers} from './speaker-refinement';
 import {splitAlignedSpeakers} from './aligned-speakers';
 import {previewText,refinePreview,planPreviewCommit,recoverPreviewCommit} from './live-preview';
 import {reviewGroups,participantIds,candidateGroups,compactStatus} from './meeting-presentation';
-import {dateContext,normalizeEvents} from './meeting-dates';
+import {dateContext,normalizeEvents,meetingDay} from './meeting-dates';
 import {ChatGPTAuth} from './openai-auth';
 import {MeetingSetupModal} from './meeting-setup';
 import {AIControlsModal,ChatGPTWelcomeModal} from './ai-ui';
-import {summaryInput,requestSummary,summaryMarkdown,chooseSummaryPath,SummaryResult,MeetingEvent} from './ai-summary';
+import {summaryInput,requestSummary,summaryMarkdown,validateSummary,chooseSummaryPath,evidenceRanges,SummaryResult,MeetingEvent} from './ai-summary';
 
 interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;overlayPosition:OverlayPosition|null;paragraphPauseSeconds:number;dictionaryEnabled:boolean;dictionaryProject:string;expectedSpeakers:number;communityPython:string;communityModel:string;alignerModel:string;speakerCountMode:'maximum'|'exact';aiModel:string;aiAutoSummary:boolean;}
 const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',overlayPosition:null,paragraphPauseSeconds:2.5,dictionaryEnabled:true,dictionaryProject:'',expectedSpeakers:0,communityPython:'',communityModel:'',alignerModel:'',speakerCountMode:'maximum',aiModel:'',aiAutoSummary:true};
@@ -36,13 +38,14 @@ export default class LocalMeeting extends Plugin {
   bridge?:WorkerBridge;
   state='대기'; pending=0; lag=0; error='';typingPaused=false;
   diagnostics:Record<string,unknown>={};private protocol=0;private dictionaryUpdates:Promise<unknown>=Promise.resolve();private persistFailed=false;
-  private summaryAudio?:SummaryAudio;private audioIndex?:SummaryAudioIndex;
+  private summaryAudio?:SummaryAudio;private audioIndex?:SummaryAudioIndex;private reviewStore?:SummaryReviewStore;private reviewDirectory?:string;
   private auth!:ChatGPTAuth;private summaryBusy=false;private errorNotices=new Map<string,number>();
   private editors!:MeetingEditors;
   private writes:Promise<unknown>=Promise.resolve();
   private status!:HTMLElement;
   private closing=false;
   private transitioning=false;
+  private sessionAudio?:{helper:string;pid?:number};
   private overlay!:HTMLElement;
   private overlayButton!:HTMLButtonElement;
   private overlayState!:HTMLElement;
@@ -67,7 +70,7 @@ export default class LocalMeeting extends Plugin {
     this.editors=new MeetingEditors(view=>view.state.field(editorInfoField,false)?.file?.path,paused=>{this.typingPaused=paused;this.refresh();});
     this.registerEditorExtension(this.editors.extension);
     this.audioIndex=new SummaryAudioIndex(isAbsolute(this.settings.storage)?join(this.settings.storage,'.local-meeting-quality',`summary-audio-${createHash('sha256').update(adapter.getBasePath()).digest('hex').slice(0,16)}.json`):undefined,()=>this.summaryAudio?.refresh());await this.audioIndex.load();
-    this.summaryAudio=new SummaryAudio(this.app,this.audioIndex,{root:()=>this.root(),recording:()=>!!this.bridge&&!this.closing,fileOf:view=>view.state.field(editorInfoField,false)?.file?.path});
+    this.summaryAudio=new SummaryAudio(this.app,this.audioIndex,{root:()=>this.root(),recording:()=>!!this.bridge&&!this.closing,systemAudio:()=>!!this.sessionAudio,fileOf:view=>view.state.field(editorInfoField,false)?.file?.path});
     this.registerEditorExtension(this.summaryAudio.extension);this.registerMarkdownPostProcessor((element,context)=>this.summaryAudio?.process(element,context.sourcePath));
     this.registerView(VIEW,leaf=>new MeetingView(leaf,this));
     this.registerObsidianProtocolHandler('local-meeting',params=>{
@@ -214,13 +217,20 @@ export default class LocalMeeting extends Plugin {
     if(inputWav!==undefined && !isAbsolute(inputWav))throw new Error('설정에서 테스트 WAV 절대 경로를 지정하세요.');
     const note=this.app.workspace.getActiveFile();
     if(!(note instanceof TFile)||note.extension!=='md') throw new Error('회의를 기록할 Markdown 노트를 먼저 여세요.');
-    const participantLimit=inputWav?{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode}:await MeetingSetupModal.ask(this.app,{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode});
+    const adapter=this.app.vault.adapter as FileSystemAdapter;
+    const audioHelper=join(adapter.getBasePath(),this.manifest.dir!,'native','Local Meeting Audio.app','Contents','MacOS','LocalMeetingAudio');
+    const [darwinMajor=0,darwinMinor=0]=osRelease().split('.').map(Number);const audioAvailable=process.platform==='darwin'&&(darwinMajor>23||darwinMajor===23&&darwinMinor>=2)&&existsSync(audioHelper);let audioOptions:{pid:number;name:string}[]=[];
+    if(!inputWav&&audioAvailable)try{const {stdout}=await promisify(execFile)(audioHelper,['--list'],{timeout:5000,maxBuffer:65536});const data:unknown=JSON.parse(stdout);if(Array.isArray(data))audioOptions=data.filter((v):v is {pid:number;name:string}=>!!v&&Number.isSafeInteger(v.pid)&&v.pid>0&&typeof v.name==='string').slice(0,100);}catch{}
+    const participantLimit=inputWav?{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode,audio:'microphone' as const}:await MeetingSetupModal.ask(this.app,{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode},audioOptions,audioAvailable);
     if(!participantLimit)return;
+    if(participantLimit.audio!=='microphone'&&this.settings.device.trim())throw new Error('시스템 오디오는 현재 기본 마이크에서만 지원합니다. 설정의 입력 장치 번호를 비워 주세요.');
+    if(participantLimit.audio==='app'&&(!Number.isSafeInteger(participantLimit.audioPid)||(participantLimit.audioPid??0)<=0))throw new Error('녹음할 앱을 다시 선택하세요.');
+    this.sessionAudio=participantLimit.audio==='microphone'?undefined:{helper:audioHelper,...(participantLimit.audio==='app'?{pid:participantLimit.audioPid}:{})};
     const id=randomUUID(); const directory=join(this.root(),id);
     await mkdir(directory,{recursive:true});
     const dictionary=await this.dictionary().request({type:'snapshot',project:this.settings.dictionaryProject,meeting:id,enabled:this.settings.dictionaryEnabled});
     const modelConfig=await readFile(join(this.settings.model,'config.json'),'utf8');
-    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
+    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',audioMode:participantLimit.audio,dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
     this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000,pipelineVersion:3,transcriptMode:'text-only',presentation:'ghost',speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,dictionaryRevision:dictionary.snapshot.revision};
     await this.saveMeeting();
     this.settings.lastSession=directory; await this.saveData(this.settings);
@@ -261,7 +271,7 @@ export default class LocalMeeting extends Plugin {
       void this.writes.then(async()=>{if(this.meeting?.id===meeting.id&&meeting.pipelineVersion===3&&meeting.speakerPassId&&!this.error&&this.settings.aiAutoSummary)await this.generateSummary(true);}).catch(error=>this.showError(String(error)));
     });
     this.bridge=bridge;
-    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,resume&&!refineOnly&&(meeting.pipelineVersion??0)<3,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})});}
+    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,resume&&!refineOnly&&(meeting.pipelineVersion??0)<3,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})},resume||inputWav?undefined:this.sessionAudio);}
     catch(error){this.bridge=undefined;this.state='오류';throw error;}
     this.refresh();
   }
@@ -404,10 +414,59 @@ export default class LocalMeeting extends Plugin {
   async aiLogout(){const revoked=await this.auth.logout();this.settings.aiModel='';await this.saveAISettings();if(!revoked)new Notice('기기에서는 로그아웃했습니다. 원격 연결 해제를 확인하지 못했으므로 ChatGPT 설정에서 앱 접근을 해제할 수 있습니다.',12000);}
   async saveAISettings(){await this.saveData(this.settings);}
   private summaryFile(directory:string,sourceHash:string,model:string){return join(directory,`ai-summary-${sourceHash}-${createHash('sha256').update(model).digest('hex').slice(0,8)}.json`);}
-  async currentSummary():Promise<SummaryResult|null>{const m=this.meeting;if(!m?.aiSummary)return null;try{const result:SummaryResult=JSON.parse(await readFile(this.summaryFile(m.directory,m.aiSummary.sourceHash,m.aiSummary.model),'utf8'));result.value.events=normalizeEvents(result.value.events,m.started);return result;}catch{return null;}}
+  private termsFile(directory:string,sourceHash:string,model:string){return join(directory,`ai-terms-${sourceHash}-${createHash('sha256').update(model).digest('hex').slice(0,8)}.json`);}
+  private reviews(){const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');if(this.reviewDirectory!==m.directory){this.reviewDirectory=m.directory;this.reviewStore=new SummaryReviewStore(m.directory);}return this.reviewStore!;}
+  async reviewItems(){const result=await this.currentSummary();return result?this.reviews().list(result):[];}
+  async updateReview(id:string,edited:ReviewItem['edited'],status:ReviewItem['status']){await this.reviews().update(id,item=>{if(item.calendar?.state==='saving')throw new Error('일정 저장이 진행 중입니다.');item.edited=edited;item.status=status;});}
+  async saveTermCandidate(item:ReviewItem,canonical:string,scope:'meeting'|'project'|'vault'|'personal'){
+    if(item.kind!=='term'||!canonical.trim())throw new Error('용어를 확인해 주세요.');
+    const dict=this.dictionary(),data=await dict.request({type:'list'}),scopeId=scope==='meeting'?this.meeting?.id:scope==='project'?this.settings.dictionaryProject:scope==='vault'?dict.vaultId:'shared';if(!scopeId)throw new Error('사전 적용 범위를 먼저 선택하세요.');
+    const termId='ai_'+item.id.replace(/-/g,'');const candidate=item.edited as import('./ai-summary').MeetingTerm;
+    const prior=data.terms.find(t=>t.canonical.normalize('NFC').toLocaleLowerCase()===canonical.trim().normalize('NFC').toLocaleLowerCase()&&t.scope.kind===scope&&t.scope.id===scopeId);
+    if(prior&&prior.id!==termId)throw new Error('같은 범위에 이미 있는 용어입니다. 회의 사전에서 확인해 주세요.');
+    if(!prior)await dict.request({type:'save',term:{id:termId,canonical,category:candidate.category,scope:{kind:scope,id:scopeId},pronunciations:[],observedErrors:[],contextTags:[],recognitionHint:true,postprocess:'hint',confirmedByUser:true,enabled:true}});
+    await this.reviews().update(item.id,i=>{i.edited={...candidate,canonicalCandidate:canonical.trim()};i.dictionaryTermId=termId;i.status='accepted';});await this.dictionaryChanged();
+  }
+  async addReviewedTask(item:ReviewItem){
+    const meeting=this.meeting;if(!meeting||item.kind!=='task')throw new Error('회의와 할 일을 확인하세요.');const store=this.reviews();
+    const task=item.edited as import('./ai-summary').MeetingTask,clean=(s:string)=>s.replace(/[\r\n]+/g,' ').replace(/\\/g,'\\\\').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/([\[\]!])/g,'\\$1');
+    if(!task.title.trim())throw new Error('할 일을 입력하세요.');
+    const line=`\n- [ ] ${clean(task.title.trim())}${task.assignee?' · 담당: '+clean(task.assignee):''}${task.due?' · 기한: '+clean(task.due):''}\n`;
+    await store.update(item.id,i=>{if(i.noteWrite)throw new Error('이미 처리했거나 기록 결과를 확인해야 합니다.');i.noteWrite={state:'saving',path:meeting.note};});
+    try{await this.reviewWrite(async()=>{if(this.meeting?.id!==meeting.id)throw new Error('회의가 변경됐습니다.');const file=this.app.vault.getAbstractFileByPath(meeting.note);if(!(file instanceof TFile))throw new Error('회의 노트를 찾을 수 없습니다.');if(!await this.editors.ready(meeting.note))throw new Error('편집기가 종료됐습니다.');if(this.meeting?.id!==meeting.id)throw new Error('회의가 변경됐습니다.');
+      const view=this.editors.find(meeting.note);if(view){view.dispatch({changes:{from:view.state.doc.length,insert:line}});await this.saveMeeting();}
+      else{let opened=false;await this.app.vault.process(file,text=>{if(this.editors.find(meeting.note)){opened=true;return text;}return text+line;});if(opened)throw new Error('노트가 열렸습니다. 기록 결과를 확인해 주세요.');}
+    });
+      await store.update(item.id,i=>{i.noteWrite={state:'saved',path:meeting.note};i.status='accepted';});
+    }catch(e){await store.update(item.id,i=>{if(i.noteWrite)i.noteWrite.state='unknown';}).catch(()=>{});throw new Error('할 일 기록 결과를 확인해 주세요. '+String(e));}
+  }
+  async currentSummary():Promise<SummaryResult|null>{const m=this.meeting;if(!m?.aiSummary)return null;try{const result:SummaryResult=JSON.parse(await readFile(this.summaryFile(m.directory,m.aiSummary.sourceHash,m.aiSummary.model),'utf8'));result.value.events=normalizeEvents(result.value.events,m.started);if(result.value.terms===undefined){try{const extra=JSON.parse(await readFile(this.termsFile(m.directory,result.sourceHash,result.model),'utf8'));if(extra.sourceHash===result.sourceHash&&extra.model===result.model&&Array.isArray(extra.terms))result.value.terms=validateSummary({...result.value,terms:extra.terms},new Set(m.segments.map(s=>s.id))).terms;}catch{}}return result;}catch{return null;}}
+  async extractTerms(){const m=this.meeting,result=await this.currentSummary();if(!m||!result)throw new Error('저장된 정리 결과가 없습니다.');if(this.summaryBusy||this.bridge)throw new Error('진행 중인 작업이 끝난 뒤 다시 시도하세요.');if(result.value.terms!==undefined)throw new Error('이미 용어 후보가 있습니다.');if(await this.summaryChanged())throw new Error('원문이 변경됐습니다. 먼저 최신 내용으로 다시 정리하세요.');
+    this.summaryBusy=true;this.refresh(true);try{const input=await this.currentInput(),generated=await requestSummary(input,result.model,await this.auth.access());if(generated.value.terms===undefined)throw new Error('용어 후보를 받지 못했습니다.');const target=this.termsFile(m.directory,result.sourceHash,result.model);await writeFile(target+'.tmp',JSON.stringify({sourceHash:result.sourceHash,model:result.model,terms:generated.value.terms},null,2),{mode:0o600});await rename(target+'.tmp',target);}finally{this.summaryBusy=false;this.refresh(true);}}
+  private async currentInput(){const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 노트가 없습니다.');const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);return summaryInput(m,doc);}
+  async summaryChanged(){const m=this.meeting;if(!m?.aiSummary)return false;const input=await this.currentInput();const legacy=createHash('sha256').update(JSON.stringify({started:input.started,document:input.document,sources:input.sources})).digest('hex');return !!m.aiSummary.stale||![input.sourceHash,legacy].includes(m.aiSummary.sourceHash);}
+  async reviewRanges(item:ReviewItem){const input=await this.currentInput();return playbackRanges(evidenceRanges(item.edited.evidence,input)).map(r=>r.label);}
+  async playReviewRange(item:ReviewItem,index:number){const m=this.meeting;if(!m||!this.summaryAudio)throw new Error('회의 녹음을 찾을 수 없습니다.');const input=await this.currentInput(),range=playbackRanges(evidenceRanges(item.edited.evidence,input))[index];if(!range)throw new Error('녹음 구간을 찾을 수 없습니다.');this.summaryAudio.play(m.id,range);}
   async refreshSummaryLayout(){const m=this.meeting,result=await this.currentSummary();if(!m||!result)throw new Error('저장된 정리 결과가 없습니다.');const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 원문을 찾을 수 없습니다.');const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file),input=summaryInput(m,doc);const base=normalizePath(join(dirname(m.note),`${basename(m.note,'.md')} - 회의 정리 (간결한 보기).md`));let note=base,n=2;while(this.app.vault.getAbstractFileByPath(note))note=base.replace(/\.md$/,` ${n++}.md`);const legacyHash=createHash('sha256').update(JSON.stringify({started:input.started,document:input.document,sources:input.sources})).digest('hex'),stale=!!m.aiSummary?.stale||result.sourceHash!==input.sourceHash&&result.sourceHash!==legacyHash;await this.app.vault.create(note,summaryMarkdown(result,input,m.note,stale));m.aiSummary={...m.aiSummary!,note};await this.saveMeeting();await this.openSummary();}
+  async createReviewedSummary(){const m=this.meeting,result=await this.currentSummary();if(!m||!result||!m.aiSummary)throw new Error('저장된 정리 결과가 없습니다.');const input=await this.currentInput(),items=await this.reviewItems();const visible=(kind:ReviewItem['kind'])=>items.filter(i=>i.kind===kind&&i.status!=='excluded').map(i=>i.edited);
+    const value={...result.value,decisions:visible('decision') as typeof result.value.decisions,tasks:visible('task') as typeof result.value.tasks,events:visible('event') as typeof result.value.events,openQuestions:visible('question') as typeof result.value.openQuestions};
+    const base=normalizePath(join(dirname(m.note),`${basename(m.note,'.md')} - 회의 정리 (검토).md`));let note=base,n=2;while(this.app.vault.getAbstractFileByPath(note))note=base.replace(/\.md$/,` ${n++}.md`);const stale=await this.summaryChanged();await this.app.vault.create(note,summaryMarkdown({...result,value},input,m.note,stale));m.aiSummary={...m.aiSummary,note,stale};await this.saveMeeting();await this.openSummary();}
   async openSummary(){const path=this.meeting?.aiSummary?.note,file=path?this.app.vault.getAbstractFileByPath(path):null;if(!(file instanceof TFile))throw new Error('생성된 정리 노트가 없습니다.');await this.app.workspace.getLeaf(false).openFile(file);}
   async openCalendarDraft(event:MeetingEvent){const adapter=this.app.vault.adapter as FileSystemAdapter;const raw=createHash('sha256').update(JSON.stringify([this.meeting?.id,this.meeting?.aiSummary?.sourceHash,event])).digest('hex').slice(0,32),uid=raw.slice(0,8)+'-'+raw.slice(8,12)+'-'+raw.slice(12,16)+'-'+raw.slice(16,20)+'-'+raw.slice(20);await openCalendarCandidate(this.app,join(adapter.getBasePath(),this.manifest.dir!,'native/calendar-bridge'),this.settings.calendarId,{...event,uid});}
+  async openReviewedCalendar(item:ReviewItem,allowSimilar=false){
+    if(item.kind!=='event')throw new Error('일정 후보가 아닙니다.');
+    const current=(await this.reviewItems()).find(i=>i.id===item.id);if(!current)throw new Error('일정 후보를 찾을 수 없습니다.');
+    if(current.calendar)throw new Error(current.calendar.state==='saved'?'이미 Mac 캘린더에 저장했습니다. 캘린더에서 확인하세요.':'이전 저장 결과를 확인하지 못했습니다. Mac 캘린더를 먼저 확인하세요.');
+    if(current.similarSaved&&!allowSimilar)throw new Error('이름이 같은 저장된 일정이 있습니다. 다른 일정인지 확인해 주세요.');
+    const store=this.reviews(),adapter=this.app.vault.adapter as FileSystemAdapter,event=current.edited as MeetingEvent;
+    await openCalendarCandidate(this.app,join(adapter.getBasePath(),this.manifest.dir!,'native/calendar-bridge'),this.settings.calendarId,{...event,uid:item.id},{
+      beforeSave:async calendarId=>{await store.update(item.id,i=>{if(i.calendar)throw new Error('저장 결과를 먼저 확인하세요.');i.calendar={state:'saving',uid:i.id,calendarId};});},
+      onSaved:async (saved,values)=>{if(!saved.eventId||!saved.calendarId||saved.uid!==item.id)throw new Error('저장된 일정의 식별자를 확인하지 못했습니다.');await store.update(item.id,i=>{i.calendar={state:'saved',uid:i.id,eventId:saved.eventId,calendarId:saved.calendarId};i.edited={...(i.edited as MeetingEvent),title:values.title,start:values.start,end:values.end,date:meetingDay(values.start),endDate:meetingDay(values.allDay?new Date(Date.parse(values.end)-1).toISOString():values.end),allDay:values.allDay} as MeetingEvent;i.status='accepted';});},
+      onFailure:async()=>{await store.update(item.id,i=>{if(i.calendar)i.calendar.state='unknown';});}
+    });
+  }
+  async clearUncertainCalendar(item:ReviewItem){await this.reviews().update(item.id,i=>{if(!i.calendar||i.calendar.state==='saved')throw new Error('다시 시도할 일정이 아닙니다.');delete i.calendar;});}
+  async clearUncertainTask(item:ReviewItem){await this.reviews().update(item.id,i=>{if(!i.noteWrite||i.noteWrite.state==='saved')throw new Error('다시 시도할 할 일이 아닙니다.');delete i.noteWrite;});}
   get isAIProcessing(){return this.summaryBusy;}
   async testAIConnection(){if(this.summaryBusy)throw new Error('AI 정리가 끝난 뒤 연결을 테스트해 주세요.');const models=await this.auth.models();if(!models.length)throw new Error('사용 가능한 모델이 없습니다.');const model=models.some(m=>m.id===this.settings.aiModel)?this.settings.aiModel:models[0]!.id;const result=await requestSummary({sourceHash:'connection-test-v2',started:'2026-10-27T00:00:00Z',document:'내일 검토회의, 모레 현장점검, 다음 주 월요일 결과 공유 회의를 합니다. 세 일정 모두 시각은 미정입니다.',sources:[]},model,await this.auth.access());const dates=result.value.events.map(e=>e.date);if(!['2026-10-28','2026-10-29','2026-11-02'].every(d=>dates.includes(d)))throw new Error('연결됐지만 상대 날짜 결과를 확인하지 못했습니다.');const path=join(this.root(),'.local-meeting-quality','openai-connection-test.json');await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify({tested:new Date().toISOString(),model,passed:true,dates},null,2));new Notice('OpenAI 연결·요약 형식·상대 날짜 변환을 확인했습니다.',10000);}
 
@@ -491,7 +550,7 @@ class MeetingSettings extends PluginSettingTab {
   constructor(app:App,private plugin:LocalMeeting){super(app,plugin);}
   display(){
     this.containerEl.empty();this.containerEl.createEl('h2',{text:'로컬 회의록 설정'});
-    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
+    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오와 함께 녹음하려면 비워 두세요.']];
     this.containerEl.createEl('p',{text:'녹음과 모델 처리는 이 Mac에서 실행합니다. 마이크 입력과 저장 위치를 확인하세요.',cls:'lm-hint'});
     const configured=existsSync(this.plugin.settings.model)&&existsSync(this.plugin.settings.communityPython)&&existsSync(this.plugin.settings.communityModel)&&existsSync(this.plugin.settings.alignerModel);
     this.containerEl.createEl('p',{text:configured?'STT · 화자 구분 모델 파일이 준비되어 있습니다.':'모델 경로를 확인해 주세요. 아래에서 로컬 파일을 연결할 수 있습니다.',cls:configured?'lm-hint':'lm-error'});

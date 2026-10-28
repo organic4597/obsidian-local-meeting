@@ -5,7 +5,7 @@ import {SummaryAudioIndex,playbackRanges,PlaybackRange,recordingPath} from './su
 import {audioRange} from './audio-review';
 import {timestamp} from './model';
 const refreshLinks=StateEffect.define<null>();
-interface PlaybackHost {root:()=>string;recording:()=>boolean;fileOf:(view:EditorView)=>string|undefined;}
+interface PlaybackHost {root:()=>string;recording:()=>boolean;systemAudio?:()=>boolean;fileOf:(view:EditorView)=>string|undefined;}
 /** One local player for all summary links; replacing or unloading it always stops audio. */
 export class SummaryAudio {
  readonly extension;private views=new Set<EditorView>();private roots=new Map<HTMLElement,string>();private player?:RangePlayer;private disposed=false;
@@ -28,7 +28,7 @@ export class SummaryAudio {
   for(const node of nodes){const fragment=document.createDocumentFragment();let at=0;for(const range of playbackRanges(node.data)){fragment.append(document.createTextNode(node.data.slice(at,range.from)),this.button(session,range));at=range.to;}fragment.append(document.createTextNode(node.data.slice(at)));node.replaceWith(fragment);}
  }
  button(session:string,range:PlaybackRange){const button=document.createElement('button');button.className='lm-audio-range';button.type='button';button.textContent=range.label;button.title='이 구간 녹음 재생';button.setAttribute('aria-label',range.label+' 녹음 재생');button.addEventListener('mousedown',e=>e.preventDefault());button.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();this.play(session,range);});return button;}
- play(session:string,range:PlaybackRange){if(this.disposed)return;this.player?.close();try{this.player=new RangePlayer(this.app,recordingPath(this.host.root(),session),range,this.host.recording);this.player.open();}catch(e){new Notice(String(e),8000);}}
+ play(session:string,range:PlaybackRange){if(this.disposed)return;if(this.host.recording()&&this.host.systemAudio?.()){new Notice('시스템 오디오를 녹음하는 동안에는 녹음 구간을 재생할 수 없습니다.',8000);return;}this.player?.close();try{this.player=new RangePlayer(this.app,recordingPath(this.host.root(),session),range,this.host.recording);this.player.open();}catch(e){new Notice(String(e),8000);}}
  stop(){this.player?.close();this.player=undefined;}
  dispose(){this.disposed=true;this.stop();for(const root of this.roots.keys())for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('.lm-audio-range')))button.replaceWith(document.createTextNode(button.textContent??''));this.roots.clear();}
 }
