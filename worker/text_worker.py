@@ -47,7 +47,7 @@ def run(args,emit):
             with contextlib.redirect_stdout(sys.stderr):
                 from mlx_qwen3_asr import Session
                 session=Session(model=str(Path(args.model).resolve()))
-            from diarization import read_pcm,slice_recording  # PCM utilities only; no Diarizer instance.
+            from pcm import read_pcm,slice_recording
             context=context_text(dictionary,session.tokenizer.encode)
             emit({'type':'ready','session':root.name})
             while True:

@@ -27,8 +27,8 @@ import {MeetingSetupModal} from './meeting-setup';
 import {AIControlsModal,ChatGPTWelcomeModal} from './ai-ui';
 import {summaryInput,requestSummary,summaryMarkdown,chooseSummaryPath,SummaryResult,MeetingEvent} from './ai-summary';
 
-interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;diarModel:string;diarLibrary:string;overlayPosition:OverlayPosition|null;paragraphPauseSeconds:number;dictionaryEnabled:boolean;dictionaryProject:string;finalizeSpeakers:boolean;expectedSpeakers:number;communityPython:string;communityModel:string;alignerModel:string;speakerCountMode:'maximum'|'exact';aiModel:string;aiAutoSummary:boolean;}
-const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',diarModel:'',diarLibrary:'',overlayPosition:null,paragraphPauseSeconds:2.5,dictionaryEnabled:true,dictionaryProject:'',finalizeSpeakers:true,expectedSpeakers:0,communityPython:'',communityModel:'',alignerModel:'',speakerCountMode:'maximum',aiModel:'',aiAutoSummary:true};
+interface Settings {python:string;model:string;storage:string;device:string;lastSession:string;testAudio:string;showTime:boolean;calendarId:string;overlayPosition:OverlayPosition|null;paragraphPauseSeconds:number;dictionaryEnabled:boolean;dictionaryProject:string;expectedSpeakers:number;communityPython:string;communityModel:string;alignerModel:string;speakerCountMode:'maximum'|'exact';aiModel:string;aiAutoSummary:boolean;}
+const DEFAULT:Settings={python:'python3',model:'',storage:'',device:'',lastSession:'',testAudio:'',showTime:false,calendarId:'',overlayPosition:null,paragraphPauseSeconds:2.5,dictionaryEnabled:true,dictionaryProject:'',expectedSpeakers:0,communityPython:'',communityModel:'',alignerModel:'',speakerCountMode:'maximum',aiModel:'',aiAutoSummary:true};
 const VIEW='local-meeting-controls';
 export default class LocalMeeting extends Plugin {
   settings:Settings={...DEFAULT};
@@ -51,7 +51,12 @@ export default class LocalMeeting extends Plugin {
   private popup!:HTMLElement;
   private persistTimer?:number;
   async onload(){
-    this.settings=Object.assign({},DEFAULT,await this.loadData());
+    const saved=await this.loadData();
+    if(saved&&typeof saved==='object'){
+      const stale=['diarModel','diarLibrary','finalizeSpeakers'];
+      if(stale.some(key=>key in saved)){for(const key of stale)delete saved[key];await this.saveData(saved);}
+    }
+    this.settings=Object.assign({},DEFAULT,saved);
     if(!Number.isInteger(this.settings.expectedSpeakers)||this.settings.expectedSpeakers<0||this.settings.expectedSpeakers>32)this.settings.expectedSpeakers=0;
     if(![2,2.5,3].includes(this.settings.paragraphPauseSeconds))this.settings.paragraphPauseSeconds=2.5;
     if(!['maximum','exact'].includes(this.settings.speakerCountMode))this.settings.speakerCountMode='maximum';
@@ -215,7 +220,7 @@ export default class LocalMeeting extends Plugin {
     await mkdir(directory,{recursive:true});
     const dictionary=await this.dictionary().request({type:'snapshot',project:this.settings.dictionaryProject,meeting:id,enabled:this.settings.dictionaryEnabled});
     const modelConfig=await readFile(join(this.settings.model,'config.json'),'utf8');
-    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',dictionary:dictionary.snapshot,finalizeSpeakers:true,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
+    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
     this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000,pipelineVersion:3,transcriptMode:'text-only',presentation:'ghost',speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,dictionaryRevision:dictionary.snapshot.revision};
     await this.saveMeeting();
     this.settings.lastSession=directory; await this.saveData(this.settings);
@@ -256,7 +261,7 @@ export default class LocalMeeting extends Plugin {
       void this.writes.then(async()=>{if(this.meeting?.id===meeting.id&&meeting.pipelineVersion===3&&meeting.speakerPassId&&!this.error&&this.settings.aiAutoSummary)await this.generateSummary(true);}).catch(error=>this.showError(String(error)));
     });
     this.bridge=bridge;
-    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,this.settings.diarModel,this.settings.diarLibrary,(meeting.pipelineVersion??0)>=2,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})});}
+    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,resume&&!refineOnly&&(meeting.pipelineVersion??0)<3,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})});}
     catch(error){this.bridge=undefined;this.state='오류';throw error;}
     this.refresh();
   }
@@ -449,7 +454,7 @@ class MeetingView extends ItemView {
     const displayState=p.bridge?p.state:compactStatus(p.state,false,false,p.isAIProcessing,p.error,!!meeting?.segments.length);this.stateEl?.setText(displayState);if(this.queueEl?.parentElement?.parentElement)this.queueEl.parentElement.parentElement.hidden=!p.bridge||p.pending===0&&p.lag===0;this.queueEl?.setText(`${p.pending}개`);this.lagEl?.setText(`${p.lag.toFixed(0)}초`);
     const diag=p.diagnostics;const diagnosticText=typeof diag.device==='string'?`${diag.device} · ${diag.sampleRate??16000}Hz · ${diag.channels??1}채널\n입력 ${diag.rmsDbfs??'—'}dBFS · 클리핑 ${diag.clippedSamples??0}샘플 · 입력 오류 ${diag.inputErrors??0}`:'녹음을 시작하면 입력 장치와 레벨을 확인할 수 있습니다.';
     this.diagnosticsEl?.setText(diagnosticText);
-    const fingerprint=JSON.stringify([!!p.bridge,p.isStopping,p.error,p.settings.showTime,p.settings.diarModel,p.settings.diarLibrary,p.settings.dictionaryEnabled,meeting?.segments.filter(needsReview).length,active?.path,meeting?.note,meeting?.segments.slice(-20),meeting?.speakers]);
+    const fingerprint=JSON.stringify([!!p.bridge,p.isStopping,p.error,p.settings.showTime,p.settings.dictionaryEnabled,meeting?.segments.filter(needsReview).length,active?.path,meeting?.note,meeting?.segments.slice(-20),meeting?.speakers]);
     if(!force&&this.fingerprint===fingerprint)return;
     if(!force&&this.contentEl.contains(document.activeElement)&&['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName??''))return;
     this.fingerprint=fingerprint;const container=this.contentEl,scroll=container.scrollTop;
@@ -486,12 +491,11 @@ class MeetingSettings extends PluginSettingTab {
   constructor(app:App,private plugin:LocalMeeting){super(app,plugin);}
   display(){
     this.containerEl.empty();this.containerEl.createEl('h2',{text:'로컬 회의록 설정'});
-    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'finalizeSpeakers'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['diarModel','화자 구분 모델','Nemotron 3 Diarization GGUF 로컬 경로'],['diarLibrary','화자 실행 라이브러리','NeMo-Speech libnemo_speech_asr_c.dylib 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
+    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
     this.containerEl.createEl('p',{text:'녹음과 모델 처리는 이 Mac에서 실행합니다. 마이크 입력과 저장 위치를 확인하세요.',cls:'lm-hint'});
     const configured=existsSync(this.plugin.settings.model)&&existsSync(this.plugin.settings.communityPython)&&existsSync(this.plugin.settings.communityModel)&&existsSync(this.plugin.settings.alignerModel);
     this.containerEl.createEl('p',{text:configured?'STT · 화자 구분 모델 파일이 준비되어 있습니다.':'모델 경로를 확인해 주세요. 아래에서 로컬 파일을 연결할 수 있습니다.',cls:configured?'lm-hint':'lm-error'});
     const basic=this.containerEl.createDiv();new Setting(basic).setName('같은 화자 문단 나누기').setDesc('말 사이의 빈 구간이 이 시간 이상이면 새 문단으로 기록합니다. 새 회의부터 적용합니다.').addDropdown(d=>d.addOptions({'2':'2초','2.5':'2.5초 (기본)','3':'3초'}).setValue(String(this.plugin.settings.paragraphPauseSeconds)).onChange(async v=>{this.plugin.settings.paragraphPauseSeconds=Number(v);await this.plugin.saveData(this.plugin.settings);}));const advanced=this.containerEl.createEl('details');advanced.open=!configured;advanced.createEl('summary',{text:'로컬 모델 · 실행 환경 설정'});
-    new Setting(basic).setName('이전 회의의 Nemotron 후처리').setDesc('이 설정은 이전 방식 세션 복구에만 적용됩니다. 새 회의는 Community-1/MPS를 사용합니다.').addToggle(t=>t.setValue(this.plugin.settings.finalizeSpeakers).onChange(async v=>{this.plugin.settings.finalizeSpeakers=v;await this.plugin.saveData(this.plugin.settings);}));
     new Setting(basic).setName('예상 발언 인원').setDesc('회의 시작 창의 기본값입니다. Community-1의 최대 화자 수 또는 고정 화자 수로 적용합니다.').addDropdown(d=>{d.addOption('0','지정 안 함');for(let i=1;i<=32;i++)d.addOption(String(i),`${i}명`);d.setValue(String(this.plugin.settings.expectedSpeakers)).onChange(async v=>{this.plugin.settings.expectedSpeakers=Number(v);await this.plugin.saveData(this.plugin.settings);});});
     new Setting(basic).setName('OpenAI 요약·할 일·일정').setDesc('브라우저에서 ChatGPT 계정을 연결합니다. 요약에는 회의 텍스트가 전송됩니다.').addButton(b=>b.setButtonText('OpenAI 연결 및 정리').onClick(()=>new AIControlsModal(this.app,this.plugin).open()));
     for(const [key,name,description] of fields)new Setting(['storage','device'].includes(key)?basic:advanced).setName(name).setDesc(description).addText(t=>t.setValue(this.plugin.settings[key]).onChange(async value=>{this.plugin.settings[key]=value;await this.plugin.saveData(this.plugin.settings);}));
