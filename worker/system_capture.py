@@ -12,6 +12,11 @@ class SystemCapture(Capture):
         self.helper=str(Path(helper).resolve());self.app_pid=app_pid;self.proc=None;self.reader=None;self.stderr_thread=None
         self.ready=threading.Event();self.stderr=[];self.ending=False
     def start(self):
+        # Load filtering libraries before the real-time callback begins; importing
+        # them concurrently with the ASR model can otherwise exhaust the audio buffer.
+        import numpy as np
+        from scipy.signal import butter,sosfilt
+        self.np=np;self.sosfilt=sosfilt;self.sos=butter(8,7200,fs=48000,output='sos')
         if (self.root/'recording.wav').exists() or list(self.root.glob('audio-*.wav')) or list(self.root.glob('queue/audio-*.pcm')):
             raise RuntimeError('기존 세션에는 추가 녹음할 수 없습니다. 새 회의를 시작하세요.')
         from recording import ContinuousWav
@@ -23,7 +28,9 @@ class SystemCapture(Capture):
             self.thread=threading.Thread(target=self.write_loop,daemon=True);self.thread.start()
             self.reader=threading.Thread(target=self._read,daemon=True);self.reader.start()
             if not self.ready.wait(15): raise RuntimeError('시스템 오디오 시작 시간이 초과됐습니다. 권한과 오디오 장치를 확인하세요.')
-            if self.error or self.proc.poll() is not None: raise RuntimeError(self.error or '시스템 오디오 캡처를 시작하지 못했습니다.')
+            if self.error or self.proc.poll() is not None:
+                self._finish_process()
+                raise RuntimeError(self.error or '시스템 오디오 캡처를 시작하지 못했습니다.')
             self.diagnostics['device']='기본 마이크 + '+('선택한 앱 오디오' if self.app_pid else '전체 시스템 오디오')
         except BaseException:
             self._finish_process();self.stop_event.set()
@@ -38,9 +45,7 @@ class SystemCapture(Capture):
         self.ready.set()
     def _read(self):
         try:
-            import numpy as np
-            from scipy.signal import butter,sosfilt
-            sos=butter(8,7200,fs=48000,output='sos');zi=np.zeros((sos.shape[0],2));received=0;pending=b''
+            np=self.np;sos=self.sos;sosfilt=self.sosfilt;zi=np.zeros((sos.shape[0],2));received=0;pending=b''
             while True:
                 data=self.proc.stdout.read(38400)
                 if not data:break
@@ -71,7 +76,9 @@ class SystemCapture(Capture):
         if self.reader:self.reader.join(timeout=5)
         if self.reader and self.reader.is_alive():self.error=self.error or '시스템 오디오 입력 종료를 확인하지 못했습니다.'
         if self.stderr_thread:self.stderr_thread.join(timeout=2)
-        if proc.returncode and not self.error:self.error='시스템 오디오 캡처 실패: '+(' '.join(self.stderr)[-500:] or str(proc.returncode))
+        if proc.returncode:
+            detail=' '.join(self.stderr)[-500:]
+            self.error=(self.error or '시스템 오디오 캡처 실패')+(': '+detail if detail else ' (종료 코드 '+str(proc.returncode)+')')
         if proc.stdout:proc.stdout.close()
         if proc.stderr:proc.stderr.close()
         self.proc=None

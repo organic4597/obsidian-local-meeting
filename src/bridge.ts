@@ -19,14 +19,14 @@ export class WorkerBridge {
     }
     const child=spawn(python,args,{shell:false,env:{...process.env,HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',HF_HUB_DISABLE_TELEMETRY:'1'},stdio:'pipe'});
     this.child=child;
-    let diagnostic='';
+    let diagnostic='',lastError='';
     child.stderr.on('data',(data:Buffer)=>{diagnostic=(diagnostic+data.toString()).slice(-4000);});
     const reader=createInterface({input:child.stdout});
-    reader.on('line',line=>{try {this.event(parseEvent(line));} catch {this.event({type:'error',message:'워커 출력 형식 오류: '+line.slice(0,150)});}});
+    reader.on('line',line=>{try {const event=parseEvent(line);if(event.type==='error')lastError=event.message;this.event(event);} catch {this.event({type:'error',message:'워커 출력 형식 오류: '+line.slice(0,150)});}});
     child.on('error',error=>this.event({type:'error',message:error.message,fatal:true}));
     child.on('close',code=>{
       reader.close();this.child=undefined;
-      if(code!==0) this.event({type:'error',message:`워커 종료(${code}). ${diagnostic.slice(-1000)}`});
+      if(code!==0) this.event({type:'error',message:`워커 종료(${code}). ${lastError||diagnostic.slice(-1000)}`});
       this.exit();
     });
     child.stdin.on('error',error=>{if((error as NodeJS.ErrnoException).code!=='EPIPE')this.event({type:'error',message:error.message});});

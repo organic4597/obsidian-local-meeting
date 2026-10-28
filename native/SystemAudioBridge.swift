@@ -36,10 +36,10 @@ func processObject(_ pid: pid_t) throws -> AudioObjectID {
     return object
 }
 final class State {
-    let lock = NSLock(); var pending = 0; var failure: String?; var blocks = 0
+    let lock = NSLock(); var pendingBytes = 0; var failure: String?
     func fail(_ message: String) { lock.lock(); defer {lock.unlock()}; if failure == nil { failure = message } }
-    func begin() -> Bool {lock.lock(); defer {lock.unlock()}; if failure != nil {return false}; if pending >= 50 {failure = "오디오 기록이 입력을 따라가지 못했습니다";return false}; pending += 1; blocks += 1;return true}
-    func end() {lock.lock(); pending -= 1; lock.unlock()}
+    func begin(_ bytes: Int) -> Bool {lock.lock(); defer {lock.unlock()}; if failure != nil {return false}; if bytes > 4*1024*1024-pendingBytes {failure = "오디오 기록이 입력을 따라가지 못했습니다";return false}; pendingBytes += bytes;return true}
+    func end(_ bytes: Int) {lock.lock(); pendingBytes -= bytes; lock.unlock()}
     func error() -> String? {lock.lock();defer{lock.unlock()};return failure}
 }
 func capture(_ pids: [pid_t]?) throws {
@@ -63,11 +63,11 @@ func capture(_ pids: [pid_t]?) throws {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating:data))
         guard buffers.count == 2, buffers[0].mNumberChannels == 1, buffers[1].mNumberChannels == 1, buffers[0].mDataByteSize == buffers[1].mDataByteSize, let m = buffers[0].mData, let s = buffers[1].mData else {state.fail("마이크와 시스템 오디오 스트림을 확인하지 못했습니다");return}
         let n = Int(buffers[0].mDataByteSize) / MemoryLayout<Float>.size
-        guard n > 0, state.begin() else {return}
+        guard n > 0, state.begin(n*8) else {return}
         let mic=m.assumingMemoryBound(to:Float.self), sys=s.assumingMemoryBound(to:Float.self)
         var block=[Float](repeating:0,count:n*2)
         for i in 0..<n {block[i*2]=mic[i];block[i*2+1]=sys[i]}
-        writer.async {block.withUnsafeBytes { raw in var sent=0;while sent<raw.count {let n=Darwin.write(STDOUT_FILENO,raw.baseAddress!.advanced(by:sent),raw.count-sent);if n<=0 {state.fail("오디오 전달이 중단됐습니다");break};sent+=n}};state.end()}
+        writer.async {block.withUnsafeBytes { raw in var sent=0;while sent<raw.count {let n=Darwin.write(STDOUT_FILENO,raw.baseAddress!.advanced(by:sent),raw.count-sent);if n<=0 {state.fail("오디오 전달이 중단됐습니다");break};sent+=n}};state.end(n*8)}
     },"audio callback")
     defer {if let proc {AudioDeviceDestroyIOProcID(aggregate,proc)}}
     try check(AudioDeviceStart(aggregate,proc),"capture start")
