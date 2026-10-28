@@ -4,7 +4,9 @@ import {promisify} from 'node:util';
 import {existsSync} from 'node:fs';
 import {join,isAbsolute,dirname,basename} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
-import {mkdir,writeFile,readFile,rename,copyFile} from 'node:fs/promises';
+import {mkdir,writeFile,readFile,rename,copyFile,readdir} from 'node:fs/promises';
+import {SummaryAudioIndex} from './summary-playback';
+import {SummaryAudio} from './summary-audio-ui';
 import {Meeting,WorkerEvent,rebaseAnchors,migrateMeeting,speakerName,timestamp} from './model';
 import {WorkerBridge} from './bridge';
 import {CalendarModal,TaskModal,openCalendarCandidate} from './calendar';
@@ -34,6 +36,7 @@ export default class LocalMeeting extends Plugin {
   bridge?:WorkerBridge;
   state='대기'; pending=0; lag=0; error='';typingPaused=false;
   diagnostics:Record<string,unknown>={};private protocol=0;private dictionaryUpdates:Promise<unknown>=Promise.resolve();private persistFailed=false;
+  private summaryAudio?:SummaryAudio;private audioIndex?:SummaryAudioIndex;
   private auth!:ChatGPTAuth;private summaryBusy=false;private errorNotices=new Map<string,number>();
   private editors!:MeetingEditors;
   private writes:Promise<unknown>=Promise.resolve();
@@ -58,6 +61,9 @@ export default class LocalMeeting extends Plugin {
     this.auth=new ChatGPTAuth({read:async()=>{const value=this.app.secretStorage.getSecret(secretId);return value?JSON.parse(value):null;},write:async value=>this.app.secretStorage.setSecret(secretId,JSON.stringify(value))},url=>require('electron').shell.openExternal(url));
     this.editors=new MeetingEditors(view=>view.state.field(editorInfoField,false)?.file?.path,paused=>{this.typingPaused=paused;this.refresh();});
     this.registerEditorExtension(this.editors.extension);
+    this.audioIndex=new SummaryAudioIndex(isAbsolute(this.settings.storage)?join(this.settings.storage,'.local-meeting-quality',`summary-audio-${createHash('sha256').update(adapter.getBasePath()).digest('hex').slice(0,16)}.json`):undefined,()=>this.summaryAudio?.refresh());await this.audioIndex.load();
+    this.summaryAudio=new SummaryAudio(this.app,this.audioIndex,{root:()=>this.root(),recording:()=>!!this.bridge&&!this.closing,fileOf:view=>view.state.field(editorInfoField,false)?.file?.path});
+    this.registerEditorExtension(this.summaryAudio.extension);this.registerMarkdownPostProcessor((element,context)=>this.summaryAudio?.process(element,context.sourcePath));
     this.registerView(VIEW,leaf=>new MeetingView(leaf,this));
     this.registerObsidianProtocolHandler('local-meeting',params=>{
       void this.guard(async()=>{
@@ -159,6 +165,7 @@ export default class LocalMeeting extends Plugin {
   async migrateCurrentNote(){
     if(!this.meeting&&this.settings.lastSession){try{this.meeting=JSON.parse(await readFile(join(this.settings.lastSession,'meeting.json'),'utf8'));}catch{}}
     const meeting=this.meeting;if(!meeting)return;
+    await this.registerSummaryAudio(meeting);
     if(meeting.presentation&&meeting.presentation!=='document'){
       const file=this.app.vault.getAbstractFileByPath(meeting.note);if(!(file instanceof TFile))return;
       const doc=this.editors.find(meeting.note)?.state.doc.toString()??await this.app.vault.read(file),recovery=recoverPreviewCommit(meeting,doc);
@@ -213,7 +220,7 @@ export default class LocalMeeting extends Plugin {
     await this.saveMeeting();
     this.settings.lastSession=directory; await this.saveData(this.settings);
     this.meeting.noteSnapshot=await this.app.vault.read(note);
-    this.showPreview();this.launch(false,inputWav);
+    this.summaryAudio?.stop();this.showPreview();this.launch(false,inputWav);
     } finally {this.transitioning=false;}
   }
   async recover(){
@@ -302,6 +309,12 @@ export default class LocalMeeting extends Plugin {
     }
     this.refresh();
   }
+  private async registerSummaryAudio(meeting:Meeting){
+    this.audioIndex?.register(meeting.aiSummary?.note,meeting.id);
+    // Earlier hash-named summaries can be linked reliably through this session's saved result files.
+    try{for(const name of await readdir(meeting.directory)){const match=name.match(/^ai-summary-([a-f0-9]{64})-([a-f0-9]{8})\.json$/);if(!match)continue;const note=normalizePath(join(dirname(meeting.note),`${basename(meeting.note,'.md')} - AI 정리 (${match[1]!.slice(0,8)} ${match[2]!.slice(0,4)}).md`));if(this.app.vault.getAbstractFileByPath(note) instanceof TFile)this.audioIndex?.register(note,meeting.id);}}catch{}
+    await this.audioIndex?.flush();
+  }
   private async saveMeeting(){
     const meeting=this.meeting;if(!meeting)return;
     if(!await this.editors.ready(meeting.note))return;
@@ -309,7 +322,7 @@ export default class LocalMeeting extends Plugin {
     const editorView=this.app.workspace.getLeavesOfType('markdown').map(leaf=>leaf.view).find(view=>view instanceof MarkdownView&&view.file?.path===meeting.note&&view.editor===info?.editor);
     // Persist the editor before its matching metadata, without reading/writing a stale disk copy.
     const snapshot=JSON.stringify(meeting,null,2);
-    try{if(editorView instanceof MarkdownView)await editorView.save();const file=join(meeting.directory,'meeting.json');await writeFile(file+'.tmp',snapshot);await rename(file+'.tmp',file);this.persistFailed=false;}catch(e){this.persistFailed=true;throw e;}
+    try{if(editorView instanceof MarkdownView)await editorView.save();const file=join(meeting.directory,'meeting.json');await writeFile(file+'.tmp',snapshot);await rename(file+'.tmp',file);this.audioIndex?.register(meeting.aiSummary?.note,meeting.id);await this.audioIndex?.flush();this.persistFailed=false;}catch(e){this.persistFailed=true;throw e;}
   }
   private async renderSegments(ids:string[],mode:'normal'|'time'|'speaker'='normal'){
     const meeting=this.meeting;if(!meeting)return;
@@ -415,7 +428,7 @@ export default class LocalMeeting extends Plugin {
     }catch(e){this.state='AI 정리 실패 · 다시 시도 가능';throw e;}finally{this.summaryBusy=false;this.refresh(true);}
   }
   stop(){if(this.bridge&&!this.closing){this.closing=true;this.state='녹음 종료 요청 / 남은 전사 처리';this.bridge.stop();this.refresh();}}
-  onunload(){this.editors?.dispose();window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.auth?.cancel();this.overlay?.remove();}
+  onunload(){this.summaryAudio?.dispose();this.editors?.dispose();window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.auth?.cancel();this.overlay?.remove();}
 }
 function participantLabel(id:string,meeting:Meeting){return speakerName({id:'',speaker:id,text:'',start:0,end:0},meeting.speakers);}
 class ParticipantModal extends Modal {
