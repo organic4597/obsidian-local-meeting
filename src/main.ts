@@ -4,6 +4,7 @@ import {promisify} from 'node:util';
 import {existsSync} from 'node:fs';
 import {join,isAbsolute,dirname,basename} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
+import {release as osRelease} from 'node:os';
 import {mkdir,writeFile,readFile,rename,copyFile,readdir} from 'node:fs/promises';
 import {SummaryAudioIndex,playbackRanges} from './summary-playback';
 import {SummaryReviewStore,ReviewItem} from './summary-review';
@@ -44,6 +45,7 @@ export default class LocalMeeting extends Plugin {
   private status!:HTMLElement;
   private closing=false;
   private transitioning=false;
+  private sessionAudio?:{helper:string;pid?:number};
   private overlay!:HTMLElement;
   private overlayButton!:HTMLButtonElement;
   private overlayState!:HTMLElement;
@@ -68,7 +70,7 @@ export default class LocalMeeting extends Plugin {
     this.editors=new MeetingEditors(view=>view.state.field(editorInfoField,false)?.file?.path,paused=>{this.typingPaused=paused;this.refresh();});
     this.registerEditorExtension(this.editors.extension);
     this.audioIndex=new SummaryAudioIndex(isAbsolute(this.settings.storage)?join(this.settings.storage,'.local-meeting-quality',`summary-audio-${createHash('sha256').update(adapter.getBasePath()).digest('hex').slice(0,16)}.json`):undefined,()=>this.summaryAudio?.refresh());await this.audioIndex.load();
-    this.summaryAudio=new SummaryAudio(this.app,this.audioIndex,{root:()=>this.root(),recording:()=>!!this.bridge&&!this.closing,fileOf:view=>view.state.field(editorInfoField,false)?.file?.path});
+    this.summaryAudio=new SummaryAudio(this.app,this.audioIndex,{root:()=>this.root(),recording:()=>!!this.bridge&&!this.closing,systemAudio:()=>!!this.sessionAudio,fileOf:view=>view.state.field(editorInfoField,false)?.file?.path});
     this.registerEditorExtension(this.summaryAudio.extension);this.registerMarkdownPostProcessor((element,context)=>this.summaryAudio?.process(element,context.sourcePath));
     this.registerView(VIEW,leaf=>new MeetingView(leaf,this));
     this.registerObsidianProtocolHandler('local-meeting',params=>{
@@ -215,13 +217,20 @@ export default class LocalMeeting extends Plugin {
     if(inputWav!==undefined && !isAbsolute(inputWav))throw new Error('설정에서 테스트 WAV 절대 경로를 지정하세요.');
     const note=this.app.workspace.getActiveFile();
     if(!(note instanceof TFile)||note.extension!=='md') throw new Error('회의를 기록할 Markdown 노트를 먼저 여세요.');
-    const participantLimit=inputWav?{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode}:await MeetingSetupModal.ask(this.app,{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode});
+    const adapter=this.app.vault.adapter as FileSystemAdapter;
+    const audioHelper=join(adapter.getBasePath(),this.manifest.dir!,'native','Local Meeting Audio.app','Contents','MacOS','LocalMeetingAudio');
+    const [darwinMajor=0,darwinMinor=0]=osRelease().split('.').map(Number);const audioAvailable=process.platform==='darwin'&&(darwinMajor>23||darwinMajor===23&&darwinMinor>=2)&&existsSync(audioHelper);let audioOptions:{pid:number;name:string}[]=[];
+    if(!inputWav&&audioAvailable)try{const {stdout}=await promisify(execFile)(audioHelper,['--list'],{timeout:5000,maxBuffer:65536});const data:unknown=JSON.parse(stdout);if(Array.isArray(data))audioOptions=data.filter((v):v is {pid:number;name:string}=>!!v&&Number.isSafeInteger(v.pid)&&v.pid>0&&typeof v.name==='string').slice(0,100);}catch{}
+    const participantLimit=inputWav?{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode,audio:'microphone' as const}:await MeetingSetupModal.ask(this.app,{count:this.settings.expectedSpeakers,mode:this.settings.speakerCountMode},audioOptions,audioAvailable);
     if(!participantLimit)return;
+    if(participantLimit.audio!=='microphone'&&this.settings.device.trim())throw new Error('시스템 오디오는 현재 기본 마이크에서만 지원합니다. 설정의 입력 장치 번호를 비워 주세요.');
+    if(participantLimit.audio==='app'&&(!Number.isSafeInteger(participantLimit.audioPid)||(participantLimit.audioPid??0)<=0))throw new Error('녹음할 앱을 다시 선택하세요.');
+    this.sessionAudio=participantLimit.audio==='microphone'?undefined:{helper:audioHelper,...(participantLimit.audio==='app'?{pid:participantLimit.audioPid}:{})};
     const id=randomUUID(); const directory=join(this.root(),id);
     await mkdir(directory,{recursive:true});
     const dictionary=await this.dictionary().request({type:'snapshot',project:this.settings.dictionaryProject,meeting:id,enabled:this.settings.dictionaryEnabled});
     const modelConfig=await readFile(join(this.settings.model,'config.json'),'utf8');
-    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
+    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',audioMode:participantLimit.audio,dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
     this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000,pipelineVersion:3,transcriptMode:'text-only',presentation:'ghost',speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,dictionaryRevision:dictionary.snapshot.revision};
     await this.saveMeeting();
     this.settings.lastSession=directory; await this.saveData(this.settings);
@@ -262,7 +271,7 @@ export default class LocalMeeting extends Plugin {
       void this.writes.then(async()=>{if(this.meeting?.id===meeting.id&&meeting.pipelineVersion===3&&meeting.speakerPassId&&!this.error&&this.settings.aiAutoSummary)await this.generateSummary(true);}).catch(error=>this.showError(String(error)));
     });
     this.bridge=bridge;
-    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,resume&&!refineOnly&&(meeting.pipelineVersion??0)<3,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})});}
+    try {bridge.start(this.settings.python,script,this.settings.model,meeting.directory,resume,this.settings.device,inputWav,resume&&!refineOnly&&(meeting.pipelineVersion??0)<3,refineOnly,{python:this.settings.communityPython,model:this.settings.communityModel,aligner:this.settings.alignerModel,...(refineOnly?{count:meeting.speakerCount??this.settings.expectedSpeakers,mode:meeting.speakerCountMode??this.settings.speakerCountMode}:{})},resume||inputWav?undefined:this.sessionAudio);}
     catch(error){this.bridge=undefined;this.state='오류';throw error;}
     this.refresh();
   }
@@ -541,7 +550,7 @@ class MeetingSettings extends PluginSettingTab {
   constructor(app:App,private plugin:LocalMeeting){super(app,plugin);}
   display(){
     this.containerEl.empty();this.containerEl.createEl('h2',{text:'로컬 회의록 설정'});
-    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오 캡처는 미지원.']];
+    const fields:[Exclude<keyof Settings,'showTime'|'overlayPosition'|'paragraphPauseSeconds'|'dictionaryEnabled'|'expectedSpeakers'|'speakerCountMode'|'aiAutoSummary'>,string,string][]=[['communityPython','Community-1 Python','pyannote.audio와 MPS가 설치된 전용 venv/bin/python 경로'],['communityModel','Community-1 모델 폴더','공식 모델을 다운로드한 로컬 폴더'],['alignerModel','대사 정렬 모델','Qwen3 ForcedAligner MLX 로컬 모델 폴더'],['python','Python 실행 파일','전용 venv/bin/python 절대 경로'],['model','MLX 모델 폴더','한국어 미세조정 모델을 변환한 로컬 폴더'],['storage','회의 오디오 저장 폴더','Vault 외부의 절대 경로. 원본 녹음이 보관됩니다.'],['testAudio','테스트 WAV 파일','16kHz mono PCM16 WAV 파일 절대 경로'],['device','입력 장치 번호','비워두면 시스템 기본 마이크. 시스템 오디오와 함께 녹음하려면 비워 두세요.']];
     this.containerEl.createEl('p',{text:'녹음과 모델 처리는 이 Mac에서 실행합니다. 마이크 입력과 저장 위치를 확인하세요.',cls:'lm-hint'});
     const configured=existsSync(this.plugin.settings.model)&&existsSync(this.plugin.settings.communityPython)&&existsSync(this.plugin.settings.communityModel)&&existsSync(this.plugin.settings.alignerModel);
     this.containerEl.createEl('p',{text:configured?'STT · 화자 구분 모델 파일이 준비되어 있습니다.':'모델 경로를 확인해 주세요. 아래에서 로컬 파일을 연결할 수 있습니다.',cls:configured?'lm-hint':'lm-error'});
