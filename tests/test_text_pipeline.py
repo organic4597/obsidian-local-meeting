@@ -28,6 +28,10 @@ class TextPipelineTests(unittest.TestCase):
  def test_silence_advances_queue_without_a_transcription_request(self):
   with tempfile.TemporaryDirectory() as root:
    h=PauseHistory(root);h.add(np.zeros(16000*5,np.float32),0);a,b,c,closed=h.plan(0,5,True);self.assertEqual(a,b);self.assertEqual(c,5);self.assertTrue(closed)
+ def test_short_live_silence_waits_instead_of_spinning_and_stop_consumes_it(self):
+  with tempfile.TemporaryDirectory() as root:
+   h=PauseHistory(root);h.add(np.zeros(16000*8,np.float32),0)
+   self.assertIsNone(h.plan(7.9,8));self.assertEqual(h.plan(7.9,8,True),(7.9,7.9,8,True))
  def test_aligned_korean_offsets_preserve_original_punctuation_and_spaces(self):
   words=[SimpleNamespace(text='첫',start_time=0,end_time=.5),SimpleNamespace(text='발언',start_time=.6,end_time=1.2)]
   r=offsets('첫 발언.',words,1000,3000);self.assertEqual(r[1]['from'],2);self.assertEqual(r[1]['to'],4);self.assertEqual(r[1]['start'],1600)

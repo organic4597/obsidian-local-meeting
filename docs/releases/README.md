@@ -1,7 +1,8 @@
 # 버전별 릴리스 노트
 
-Git 커밋 및 검증 기록을 기준으로 소급 작성했습니다. [GitHub Releases](https://github.com/organic4597/obsidian-local-meeting/releases)에서도 같은 내용을 확인할 수 있습니다. 실제 앱 재생이 미검증인 0.10.0을 포함해 과거 개발판을 프리릴리스로 표시합니다.
+Git 커밋 및 검증 기록을 기준으로 소급 작성했습니다. [GitHub Releases](https://github.com/organic4597/obsidian-local-meeting/releases)에서도 같은 내용을 확인할 수 있습니다. 과거 개발판을 프리릴리스로 표시합니다. 0.11.0은 개발 브랜치의 변경사항입니다.
 
+- [v0.11.0](v0.11.0.md) — Community-1 전용 화자 구분과 이전 모델 제거
 - [v0.10.0](v0.10.0.md) — 요약 시간 범위 녹음 재생
 - [v0.9.0](v0.9.0.md) — 검토·일정·요약 간소화
 - [v0.8.0](v0.8.0.md) — 고스트 전사와 글자 표시

@@ -18,7 +18,7 @@ export function resolveMeetingDays(expression:string,started:string):string[]|nu
  if(explicit){let year=Number(explicit[1]??c.referenceDate.slice(0,4));if(!explicit[1]&&s.includes('내년'))year++;let day=`${year}-${explicit[2]!.padStart(2,'0')}-${explicit[3]!.padStart(2,'0')}`;if(!explicit[1]&&!s.includes('올해')&&!s.includes('내년')&&day<c.referenceDate)day=`${year+1}`+day.slice(4);if(validDay(day))days.push(day);}
  return days.length?[...new Set(days)].sort():null;
 }
-export interface DatedEvent {title:string;start:string|null;end:string|null;whenText:string;date?:string|null;endDate?:string|null;}
+export interface DatedEvent {title:string;start:string|null;end:string|null;whenText:string;date?:string|null;endDate?:string|null;allDay?:boolean;}
 export function normalizeEventDates<T extends DatedEvent>(event:T,started:string):Array<T&DatedEvent>{
  const dates=resolveMeetingDays(event.whenText,started);let e={...event};
  if(!dates){if(/다음\s*주|다다음\s*주|조만간|언젠가|내일모레/.test(event.whenText)){e.date=null;e.endDate=null;e.start=null;e.end=null;}return [e];}
@@ -31,6 +31,6 @@ export function normalizeEventDates<T extends DatedEvent>(event:T,started:string
  if(dates.length>1&&/부터|까지|[~～]/.test(event.whenText))return [apply(dates[0]!,dates.at(-1)!)];
  return dates.map(day=>apply(day,null));
 }
-export function eventDateLabel(e:DatedEvent){const date=e.date??(e.start?meetingDay(e.start):null);if(!date)return e.whenText?`${e.whenText} · 날짜 확인 필요`:'날짜·시간 미정';const range=e.endDate&&e.endDate!==date?`${date}–${e.endDate}`:date;const time=e.start?new Intl.DateTimeFormat('ko-KR',{timeZone:MEETING_ZONE,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(e.start)):'시간 미정';return `${range} · ${time}`;}
+export function eventDateLabel(e:DatedEvent){const date=e.date??(e.start?meetingDay(e.start):null);if(!date)return e.whenText?`${e.whenText} · 날짜 확인 필요`:'날짜·시간 미정';const range=e.endDate&&e.endDate!==date?`${date}–${e.endDate}`:date;const time=e.allDay?'종일':e.start?new Intl.DateTimeFormat('ko-KR',{timeZone:MEETING_ZONE,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(e.start)):'시간 미정';return `${range} · ${time}`;}
 
 export function normalizeEvents<T extends DatedEvent>(events:T[],started:string){const seen=new Set<string>();return events.flatMap(e=>normalizeEventDates(e,started)).filter(e=>{const key=JSON.stringify([e.title,e.whenText,e.date,e.endDate,e.start,e.end]);if(seen.has(key))return false;seen.add(key);return true;});}
