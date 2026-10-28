@@ -11,6 +11,8 @@ def bounds(count,mode):
 
 def run(root,model,count=0,mode='maximum',emit=print):
     root=Path(root);model=Path(model).resolve();options=bounds(count,mode)
+    config=json.loads((root/'pipeline.json').read_text()) if (root/'pipeline.json').exists() else {}
+    voice_enabled=config.get('voiceProfiles') is True
     if not (model/'config.yaml').is_file():raise ValueError('다운로드된 Community-1 로컬 모델 폴더가 필요합니다.')
     audio=root/'recording.wav';digest=hashlib.sha256()
     with audio.open('rb') as f:
@@ -23,7 +25,11 @@ def run(root,model,count=0,mode='maximum',emit=print):
     target=root/'community-refinement.json'
     if target.exists():
         saved=json.loads(target.read_text())
-        if saved.get('passId')==pass_id:emit(saved);return saved
+        feature_path=root/'voice-features.json';features_valid=False
+        if voice_enabled and feature_path.exists():
+            try:features_valid=json.loads(feature_path.read_text()).get('passId')==pass_id
+            except (ValueError,OSError):pass
+        if saved.get('passId')==pass_id and (not voice_enabled or features_valid):emit(saved);return saved
     emit({'type':'status','pending':0,'lag':0,'state':'회의 종료 후 Community-1/MPS 화자 구분 중'})
     with contextlib.redirect_stdout(sys.stderr):
         import numpy as np,torch
@@ -39,6 +45,12 @@ def run(root,model,count=0,mode='maximum',emit=print):
         torch.mps.synchronize()
     turns=[{'start':max(0,round(seg.start*1000)),'end':min(round(duration),round(seg.end*1000)),'speaker':'community_'+str(speaker).removeprefix('SPEAKER_')} for seg,_,speaker in output.speaker_diarization.itertracks(yield_label=True) if seg.end>seg.start]
     turns=[t for t in turns if t['end']>t['start']]
+    if voice_enabled:
+        from voice_features import features_from_output,save_features
+        try:
+            features=features_from_output(output.speaker_diarization.labels(),output.speaker_embeddings,turns,manifest.hexdigest(),pass_id,root.name)
+            if features is not None:save_features(root,features)
+        except Exception as e:emit({'type':'status','pending':0,'lag':0,'state':'화자 특징 수집 실패 · 전사 결과는 보존됨','diagnostics':{'voiceProfileError':str(e)}})
     result={'type':'speaker_refinement','session':root.name,'passId':pass_id,'preset':'community-1-mps','turns':turns,'detectedSpeakers':len({t['speaker'] for t in turns}),'processingSeconds':round(time.monotonic()-began,4),'speakerCount':count,'speakerCountMode':mode,'peakRssBytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}
     write_atomic(target,result);emit(result);return result
 

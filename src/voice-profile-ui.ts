@@ -1,0 +1,24 @@
+import {App,Modal,Notice} from 'obsidian';
+import {Meeting} from './model';
+import {VoiceFeatures,VoiceProfiles} from './voice-profiles';
+interface VoiceHost {meeting?:Meeting;bridge?:unknown;voiceProfiles():VoiceProfiles;voiceFeatures():Promise<VoiceFeatures|null>;confirmVoiceCluster(cluster:string,profileId:string):Promise<void>;}
+function button(parent:HTMLElement,label:string,fn:()=>Promise<void>|void){const b=parent.createEl('button',{text:label,attr:{type:'button'}});b.addEventListener('click',()=>{b.disabled=true;void Promise.resolve().then(fn).catch(e=>new Notice(String(e),8000)).finally(()=>{if(b.isConnected)b.disabled=false;});});return b;}
+export class VoiceProfilesModal extends Modal {
+ private closed=false;private generation=0;
+ constructor(app:App,private host:VoiceHost){super(app);}
+ onOpen(){this.setTitle('음성 프로필');this.modalEl.addClass('lm-quality-modal');void this.render();}
+ onClose(){this.closed=true;this.generation++;}
+ private async render(){const generation=++this.generation;try{const profiles=await this.host.voiceProfiles().list(),features=await this.host.voiceFeatures(),m=this.host.meeting;if(this.closed||generation!==this.generation)return;const root=this.contentEl;root.empty();root.createEl('p',{text:'참여자에게 음성 특징 저장을 알리고 동의를 받은 회의에서만 수집하세요. 음성·특징은 외부 AI에 보내지 않습니다.',cls:'lm-hint'});root.createEl('p',{text:'회의 시작 때 자동 수집을 켜면 종료 후 특징을 추출합니다. 이름을 직접 확인한 그룹은 자동으로 프로필에 추가됩니다.',cls:'lm-hint'});root.createEl('p',{text:'자동 이름 배정은 실제 회의에서 검증한 유사도 기준을 설정하기 전까지 꺼져 있습니다. 후보를 직접 확인해 연결할 수 있습니다.',cls:'lm-hint'});
+ const groups=root.createEl('details',{cls:'lm-review-group'});groups.open=true;groups.createEl('summary',{text:'이번 회의의 음성 그룹'});
+ if(this.host.bridge)groups.createEl('p',{text:'녹음과 후처리가 끝나면 후보를 확인할 수 있습니다.',cls:'lm-hint'});
+ else if(!features||!m)groups.createEl('p',{text:'이번 회의의 음성 특징이 없습니다. 회의 시작에서 자동 수집을 켜 주세요.',cls:'lm-hint'});
+ else if(!features.items.length)groups.createEl('p',{text:'단독 음성 특징이 충분하지 않습니다. 다음 회의에서 자동으로 다시 수집합니다.',cls:'lm-hint'});
+ else for(const f of features.items){const local=m.speakerClusters?.[f.cluster],row=groups.createDiv({cls:'lm-event-candidate'}),content=row.createDiv();content.createEl('strong',{text:local?m.speakers[local]??m.speakerCandidates?.[local]?.label??'미확정 음성 그룹':'미확정 음성 그룹'});content.createEl('p',{text:`단독 음성 ${(f.speechMs/1000).toFixed(1)}초${m.speakerClusterConflicts?.includes(f.cluster)?' · 화자 충돌 확인 필요':''}`,cls:'lm-hint'});if(!local||m.speakerClusterConflicts?.includes(f.cluster))continue;const matches=await this.host.voiceProfiles().match(features,f.cluster);if(this.closed||generation!==this.generation)return;if(!matches.length){content.createEl('p',{text:'비교 가능한 다른 회의의 프로필이 없습니다. 화자 이름을 지정하면 자동으로 수집합니다.',cls:'lm-hint'});continue;}const select=content.createEl('select',{attr:{'aria-label':'연결할 음성 프로필'}});select.createEl('option',{value:'',text:'비교 후보 선택'});for(const match of matches.slice(0,5))select.createEl('option',{value:match.profileId,text:`${match.name} · 유사도 ${match.score.toFixed(2)}`});content.createEl('p',{text:'유사도는 확률이 아닙니다. 유사한 목소리나 섞인 발언이 있을 수 있어 듣고 확인해 주세요.',cls:'lm-hint'});button(row,'선택한 이름으로 연결',async()=>{if(!select.value)throw new Error('연결할 프로필을 선택하세요.');await this.host.confirmVoiceCluster(f.cluster,select.value);await this.render();});}
+ const saved=root.createEl('details',{cls:'lm-review-group'});saved.open=true;saved.createEl('summary',{text:`저장된 프로필 · ${profiles.length}명`});if(!profiles.length)saved.createEl('p',{text:'회의가 끝난 뒤 화자 이름을 지정하면 조건이 맞는 음성이 자동으로 등록됩니다.',cls:'lm-hint'});
+ for(const p of profiles){const row=saved.createDiv({cls:'lm-event-candidate'}),content=row.createDiv();content.createEl('strong',{text:p.name});const seconds=p.samples.filter(s=>s.verified!==false).reduce((n,s)=>n+s.speechMs,0)/1000,pending=p.samples.filter(s=>s.verified===false).length,size=Buffer.byteLength(JSON.stringify(p));content.createEl('p',{text:`${p.enabled?'사용 중':'사용 중지'} · 확인된 음성 ${seconds.toFixed(1)}초 · 자동 수집 확인 전 ${pending}개 · ${(size/1024).toFixed(1)}KB / 2MB`,cls:'lm-hint'});button(row,p.enabled?'사용 중지':'사용',async()=>{await this.host.voiceProfiles().setEnabled(p.id,!p.enabled);await this.render();});button(row,'삭제',()=>new DeleteVoiceModal(this.app,p.name,async()=>{await this.host.voiceProfiles().delete(p.id);await this.render();}).open());}
+ }catch(e){if(!this.closed){this.contentEl.empty();this.contentEl.createEl('p',{text:String(e),cls:'lm-form-error'});}}}
+}
+class DeleteVoiceModal extends Modal {
+ constructor(app:App,private name:string,private remove:()=>Promise<void>){super(app);}
+ onOpen(){this.setTitle('음성 프로필 삭제');this.contentEl.createEl('p',{text:`“${this.name}”의 저장된 특징을 삭제합니다. 기존 회의 녹음과 노트의 이름은 유지됩니다.`});button(this.contentEl,'프로필 삭제',async()=>{await this.remove();this.close();});button(this.contentEl,'취소',()=>this.close());}
+}

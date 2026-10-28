@@ -23,6 +23,7 @@ function align(weights:number[][]){
 }
 export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0){
  if(meeting.speakerPassId===pass.passId)return [];
+ delete meeting.voiceAutoAssignments;
  const clusters=[...new Set(pass.turns.map(t=>t.speaker))].sort(),old=[...new Set(meeting.segments.map(s=>s.speaker).filter(id=>known(id)&&!isUnconfirmedSpeaker(meeting,id)))].sort((a,b)=>meeting.segments.filter(s=>s.speaker===b).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)-meeting.segments.filter(s=>s.speaker===a).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)).slice(0,32);
  const spans=new Map(meeting.segments.map(s=>[s.id,evidence(pass.turns,s.start,s.end)]));
  // A user-assigned speaker is a strong anchor, but an edited paragraph is kept intact below.
@@ -40,6 +41,7 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
   if(hasPeople){meeting.speakerCandidates??={};meeting.speakerCandidates[id]={label:`미확정 음성 그룹 ${clusters.indexOf(c)+1}`,passId:pass.passId};}
   else meeting.speakers[id]??=`화자 ${clusters.indexOf(c)+1}`;
  }
+ meeting.speakerClusters=Object.fromEntries(mapping);meeting.speakerClusterConflicts=[...conflicts];
  const changed:string[]=[];
  for(const s of meeting.segments){
   const anchor=meeting.anchors?.[s.id];
