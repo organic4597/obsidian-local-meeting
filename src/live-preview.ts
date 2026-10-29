@@ -5,7 +5,7 @@ import {refineSpeakers} from './speaker-refinement';
 
 /** Preview text never becomes a Markdown edit until explicitly committed. */
 export function previewText(meeting:Meeting,showTime=false){
- const copy=structuredClone(meeting);copy.rendered={};copy.anchors={};copy.noteSnapshot='';
+ const copy=structuredClone(meeting);copy.rendered={};copy.anchors={};copy.noteSnapshot='';if(copy.segments.some(s=>s.speakerLocked))copy.transcriptMode='dialogue';
  return transcriptChanges('',copy,copy.segments.map(s=>s.id),showTime).text.trimEnd();
 }
 /** Align against a virtual transcript, without borrowing positions from the user's notes. */

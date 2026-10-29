@@ -23,3 +23,13 @@ export function numberCandidateGroups(m:Meeting):string[]{
  }
  return changed;
 }
+
+/** Explicit removal preserves spoken text, while assigning its owner deliberately. */
+export function removeParticipant(m:Meeting,id:string,target:string):string[]{
+ if(!participantIds(m).includes(id)||id===target||target!=='unknown'&&!participantIds(m).includes(target))throw new Error('참여자를 다시 선택해 주세요.');
+ const affected=m.segments.filter(s=>s.speaker===id);if(affected.some(s=>m.anchors?.[s.id]?.locked||m.anchors?.[s.id]?.deleted))throw new Error('직접 수정하거나 삭제한 발언이 있습니다. 해당 발언을 먼저 확인해 주세요.');
+ for(const s of affected){s.history=[...(s.history??[]),{at:new Date().toISOString(),before:{text:s.text,speaker:s.speaker,textLocked:s.textLocked,speakerLocked:s.speakerLocked,speakerState:s.speakerState,suggestions:structuredClone(s.suggestions),reviewedRevision:s.reviewedRevision},afterText:s.text,afterSpeaker:target,userRevision:(s.userRevision??0)+1,speakerNameBefore:m.speakers[id]}];s.userRevision=(s.userRevision??0)+1;s.speaker=target;s.speakerLocked=true;s.speakerState=target==='unknown'?'unknown':'manual';}
+ for(const s of m.segments)if(s.candidates)s.candidates=s.candidates.filter(c=>c.speaker!==id);
+ for(const [cluster,local] of Object.entries(m.speakerClusters??{}))if(local===id){delete m.speakerClusters![cluster];delete m.voiceAutoAssignments?.[cluster];m.speakerClusterConflicts=[...new Set([...(m.speakerClusterConflicts??[]),cluster])];}
+ delete m.speakers[id];delete m.speakerCandidates?.[id];m.voiceConfirmedSpeakers=(m.voiceConfirmedSpeakers??[]).filter(x=>x!==id);return affected.map(s=>s.id);
+}
