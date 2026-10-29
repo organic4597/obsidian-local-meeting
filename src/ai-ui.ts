@@ -23,6 +23,7 @@ export class AIControlsModal extends Modal {
   const actions=root.createDiv({cls:'lm-form-actions'});
   if(result)this.action(actions,'정리 노트 열기',async()=>{await this.host.openSummary();this.close();},true);
   const generate=this.action(actions,result?'최신 내용으로 다시 정리':'회의 정리 만들기 / 다시 시도',()=>this.host.generateSummary(),!result);generate.disabled=this.busy||!status.planAllowed;
+  if(result){this.action(root,'구간 녹음 줄바꿈한 새 정리 노트 만들기',async()=>{await this.host.refreshSummaryLayout();this.close();});root.createEl('p',{text:'기존 정리 노트와 직접 수정한 내용을 보존해 줄바꿈한 새 노트를 만듭니다.',cls:'lm-hint'});}
   let models:ModelChoice[]=[];if(status.planAllowed)try{models=await this.host.aiModels();}catch(e){if(!this.closed&&generation===this.generation)root.createEl('p',{text:'모델 목록을 불러오지 못했습니다. 연결을 확인한 뒤 정리를 다시 시도하세요. '+String(e),cls:'lm-error'});}
   if(this.closed||generation!==this.generation)return;
   if(models.length&&!models.some(m=>m.id===this.host.settings.aiModel)){this.host.settings.aiModel=models[0]!.id;await this.host.saveAISettings();}

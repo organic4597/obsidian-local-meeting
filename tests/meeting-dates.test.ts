@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {meetingDay,dateContext,resolveMeetingDays,normalizeEventDates,normalizeEvents,eventDateLabel,validDay} from '../src/meeting-dates';
-import {evidenceRanges,summaryInput,summaryMarkdown} from '../src/ai-summary';
+import {evidenceRanges,summaryInput,summaryMarkdown,wrapExistingRecordingRanges} from '../src/ai-summary';
 const started='2026-10-27T00:00:00Z';
 test('Korean relative dates follow the meeting date rather than execution time',()=>{assert.deepEqual(resolveMeetingDays('내일',started),['2026-10-28']);assert.deepEqual(resolveMeetingDays('모레',started),['2026-10-29']);assert.deepEqual(resolveMeetingDays('모래 현장 방문',started),['2026-10-29']);assert.deepEqual(resolveMeetingDays('다음 주 월요일',started),['2026-11-02']);assert.deepEqual(resolveMeetingDays('다음주 금요일',started),['2026-11-06']);assert.deepEqual(resolveMeetingDays('목요일하고 금요일',started),['2026-10-29','2026-10-30']);});
 test('dates cross Seoul midnight, months, years and Monday-based weeks',()=>{assert.equal(meetingDay('2026-10-27T16:00:00Z'),'2026-10-28');assert.deepEqual(resolveMeetingDays('내일','2026-12-31T00:00:00Z'),['2027-01-01']);assert.deepEqual(resolveMeetingDays('다음 주 월요일','2026-11-01T00:00:00Z'),['2026-11-02']);assert.deepEqual(resolveMeetingDays('이번 주 월요일',started),['2026-10-26']);assert.equal(dateContext(started).timeZone,'Asia/Seoul');});
@@ -13,3 +13,7 @@ test('summary references use actual start/end ranges without repeated evidence l
 test('duplicate multi-day AI entries collapse and vague dates cannot force Monday',()=>{const event={title:'운영',whenText:'목요일하고 금요일',start:null,end:null};assert.equal(normalizeEvents([event,event],started).length,2);const [vague]=normalizeEventDates({...event,whenText:'다음 주',date:'2026-11-02'},started);assert.equal(vague!.date,null);});
 
 test('yearless future calendar dates cross New Year without using the execution year',()=>{assert.deepEqual(resolveMeetingDays('1월 2일','2026-12-31T00:00:00Z'),['2027-01-02']);assert.deepEqual(resolveMeetingDays('올해 1월 2일','2026-12-31T00:00:00Z'),['2026-01-02']);});
+
+test('summary puts each recording range on its own Markdown hard-break line',()=>{const input={sourceHash:'test',started,document:'',sources:[{id:'a',start:260000,end:269000,speaker:'A'},{id:'b',start:600000,end:605000,speaker:'B'}]};const result={sourceHash:'test',created:'now',model:'test',value:{summary:'회의 요약',decisions:[{description:'결정',evidence:['a','b']}],tasks:[{title:'할 일',assignee:null,due:null,evidence:['a']}],events:[],openQuestions:[{description:'질문',evidence:['note']}],terms:[]}};const text=summaryMarkdown(result,input,'meeting.md');assert.match(text,/- 결정  \n  구간 녹음: 04:20–04:29  \n  구간 녹음: 10:00–10:05/);assert.match(text,/- \[ \] 할 일  \n  구간 녹음: 04:20–04:29/);assert.match(text,/- 질문\n/);});
+
+test('existing summary formatting preserves edits and fenced examples',()=>{const old='- [x] 사용자가 수정한 할 일 · 담당: 김 · 00:10–00:20, 01:00–01:20\n- 구간 없는 항목\n```\n- 예시 · 00:10–00:20\n```';const converted=wrapExistingRecordingRanges(old);assert.equal(converted,'- [x] 사용자가 수정한 할 일 · 담당: 김  \n  구간 녹음: 00:10–00:20  \n  구간 녹음: 01:00–01:20\n- 구간 없는 항목\n```\n- 예시 · 00:10–00:20\n```');assert.equal(wrapExistingRecordingRanges(converted),converted);});

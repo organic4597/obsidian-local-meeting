@@ -1,5 +1,6 @@
 import {dateContext,meetingDay,validDay,normalizeEvents,eventDateLabel} from './meeting-dates';
 import {createHash} from 'node:crypto';
+import {playbackRanges} from './summary-playback';
 import {Meeting,timestamp,speakerName} from './model';
 import {OpenAITransport,openAIRequest,requireSuccess} from './openai-http';
 export interface EvidencePoint {description:string;evidence:string[];}
@@ -47,8 +48,8 @@ export async function requestSummary(input:SummaryInput,model:string,token:strin
 const plain=(s:string)=>s.replace(/\\/g,'\\\\').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/([\[\]!])/g,'\\$1');
 const line=(s:string)=>plain(s.replace(/[\r\n]+/g,' '));
 export function summaryMarkdown(result:SummaryResult,input:SummaryInput,originalNote:string,stale=false){
- const proof=(ids:string[])=>evidenceRanges(ids,input),s=result.value;
- return `# 회의 정리\n\n회의일: ${meetingDay(input.started)} · [[${originalNote.replace(/\.md$/,'')}|원문 보기]]\n${stale?'\n정리 중 원문이 변경됐습니다. 최신 내용으로 다시 정리할 수 있습니다.\n':''}\n## 요약\n\n${plain(s.summary)}\n\n## 결정사항\n\n${s.decisions.map(p=>`- ${line(p.description)}${proof(p.evidence)?' · '+proof(p.evidence):''}`).join('\n')||'확정된 결정사항 없음'}\n\n## 할 일\n\n${s.tasks.map(t=>`- [ ] ${line(t.title)}${t.assignee?' · 담당: '+line(t.assignee):''}${t.due?' · 기한: '+line(t.due):''}${proof(t.evidence)?' · '+proof(t.evidence):''}`).join('\n')||'확인된 할 일 없음'}\n\n## 일정 후보\n\n${s.events.map(e=>`- ${line(e.title)} · ${line(eventDateLabel(e))}${proof(e.evidence)?' · '+proof(e.evidence):''}`).join('\n')||'확인된 일정 없음'}\n\n## 확인할 사항\n\n${s.openQuestions.map(p=>`- ${line(p.description)}${proof(p.evidence)?' · '+proof(p.evidence):''}`).join('\n')||'추가 확인사항 없음'}\n`;
+ const proof=(ids:string[])=>{const ranges=evidenceRanges(ids,input);return ranges?'  \n  '+ranges.split(', ').map(range=>'구간 녹음: '+range).join('  \n  '):'';},s=result.value;
+ return `# 회의 정리\n\n회의일: ${meetingDay(input.started)} · [[${originalNote.replace(/\.md$/,'')}|원문 보기]]\n${stale?'\n정리 중 원문이 변경됐습니다. 최신 내용으로 다시 정리할 수 있습니다.\n':''}\n## 요약\n\n${plain(s.summary)}\n\n## 결정사항\n\n${s.decisions.map(p=>`- ${line(p.description)}${proof(p.evidence)}`).join('\n')||'확정된 결정사항 없음'}\n\n## 할 일\n\n${s.tasks.map(t=>`- [ ] ${line(t.title)}${t.assignee?' · 담당: '+line(t.assignee):''}${t.due?' · 기한: '+line(t.due):''}${proof(t.evidence)}`).join('\n')||'확인된 할 일 없음'}\n\n## 일정 후보\n\n${s.events.map(e=>`- ${line(e.title)} · ${line(eventDateLabel(e))}${proof(e.evidence)}`).join('\n')||'확인된 일정 없음'}\n\n## 확인할 사항\n\n${s.openQuestions.map(p=>`- ${line(p.description)}${proof(p.evidence)}`).join('\n')||'추가 확인사항 없음'}\n`;
 }
 
 /** Merge nearby source spans, preserving gaps rather than inventing one continuous range. */
@@ -61,4 +62,13 @@ export function evidenceRanges(ids:string[],input:SummaryInput){
 export function chooseSummaryPath(base:string,prior:Meeting['aiSummary'],sourceHash:string,model:string,exists:(path:string)=>boolean){
  if(prior?.sourceHash===sourceHash&&prior.model===model&&exists(prior.note))return prior.note;
  let path=base,n=2;while(exists(path))path=base.replace(/\.md$/,` ${n++}.md`);return path;
+}
+
+/** Preserve edited summary text, converting only a trailing list of time ranges. */
+export function wrapExistingRecordingRanges(markdown:string){
+ let fenced=false;return markdown.split('\n').map(line=>{
+  if(/^\s*(```|~~~)/.test(line)){fenced=!fenced;return line;}if(fenced||!/^\s*[-*+]\s/.test(line))return line;
+  const sep=line.lastIndexOf(' · ');if(sep<0)return line;const tail=line.slice(sep+3),ranges=playbackRanges(tail);if(!ranges.length||ranges.map(r=>r.label).join(', ')!==tail)return line;
+  return line.slice(0,sep)+'  \n  '+ranges.map(r=>'구간 녹음: '+r.label).join('  \n  ');
+ }).join('\n');
 }
