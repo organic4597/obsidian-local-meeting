@@ -1,5 +1,5 @@
 import {Meeting,Segment} from './model';
-import {needsReview} from './quality-model';
+import {needsReview,undoReview} from './quality-model';
 export function isUnconfirmedSpeaker(m:Meeting,id:string){return !!m.speakerCandidates?.[id]||id.startsWith('final_')&&/^새 화자 \d+$/.test(m.speakers[id]??'')&&!m.segments.some(s=>s.speaker===id&&s.speakerLocked);}
 export function participantIds(m:Meeting){return [...new Set([...m.segments.map(s=>s.speaker),...Object.keys(m.speakers)])].filter(id=>!['unknown','overlap','pending'].includes(id));}
 export function candidateGroups(m:Meeting){const ids=new Set([...Object.keys(m.speakerCandidates??{}),...Object.keys(m.speakers).filter(id=>isUnconfirmedSpeaker(m,id))]);return [...ids].map(id=>({id,label:m.speakerCandidates?.[id]?.label??'미확정 음성 그룹',segments:m.segments.filter(s=>s.speaker===id||s.speaker==='unknown'&&s.candidates?.some(c=>c.speaker===id&&c.activity>=.85))})).filter(c=>c.segments.length);}
@@ -32,4 +32,12 @@ export function removeParticipant(m:Meeting,id:string,target:string):string[]{
  for(const s of m.segments)if(s.candidates)s.candidates=s.candidates.filter(c=>c.speaker!==id);
  for(const [cluster,local] of Object.entries(m.speakerClusters??{}))if(local===id){delete m.speakerClusters![cluster];delete m.voiceAutoAssignments?.[cluster];m.speakerClusterConflicts=[...new Set([...(m.speakerClusterConflicts??[]),cluster])];}
  delete m.speakers[id];delete m.speakerCandidates?.[id];m.voiceConfirmedSpeakers=(m.voiceConfirmedSpeakers??[]).filter(x=>x!==id);return affected.map(s=>s.id);
+}
+
+/** Only undo an unchanged most-recent group deletion; never infer an identity. */
+export function restoreDeletedGroups(m:Meeting):string[]{
+ const changed:string[]=[];for(const s of m.segments){const h=s.history?.at(-1),id=h?.before.speaker,label=h?.speakerNameBefore;if(!h||!id||!/^candidate_[a-f0-9]{16}_community_\d{1,2}$/.test(id)||!label||h.afterSpeaker!=='unknown'||s.speaker!=='unknown'||s.text!==h.afterText||s.userRevision!==h.userRevision||m.anchors?.[s.id]?.locked||m.anchors?.[s.id]?.deleted)continue;
+  const match=id.match(/^candidate_([a-f0-9]{16})_(community_\d{1,2})$/)!;if(!m.speakerPassId?.startsWith(match[1]!))continue;const existing=m.speakers[id];if(existing&&existing!==label)continue;
+  undoReview(s);m.speakers[id]=label;m.speakerCandidates??={};m.speakerCandidates[id]={label,passId:m.speakerPassId};m.speakerClusters??={};if(!m.speakerClusters[match[2]!])m.speakerClusters[match[2]!]=id;changed.push(s.id);
+ }return changed;
 }
