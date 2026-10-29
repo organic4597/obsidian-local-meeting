@@ -24,7 +24,7 @@ import {acceptRevision,needsReview,reviewEdit,undoReview} from './quality-model'
 import {refineSpeakers} from './speaker-refinement';
 import {splitAlignedSpeakers} from './aligned-speakers';
 import {previewText,refinePreview,planPreviewCommit,recoverPreviewCommit} from './live-preview';
-import {reviewGroups,participantIds,candidateGroups,compactStatus} from './meeting-presentation';
+import {reviewGroups,participantIds,candidateGroups,compactStatus,numberCandidateGroups} from './meeting-presentation';
 import {dateContext,normalizeEvents,meetingDay} from './meeting-dates';
 import {ChatGPTAuth} from './openai-auth';
 import {MeetingSetupModal} from './meeting-setup';
@@ -116,6 +116,7 @@ export default class LocalMeeting extends Plugin {
     this.addCommand({id:'start',name:'현재 노트에서 회의 녹음 시작',callback:()=>{void this.guard(()=>this.start());}});
     this.addCommand({id:'stop',name:'녹음 중지 및 남은 전사 처리',callback:()=>this.stop()});
     this.addCommand({id:'recordings',name:'현재 회의 녹음 파일 보기',callback:()=>{void this.guard(()=>this.openRecordingFolder());}});
+    this.addCommand({id:'number-unknown-speakers',name:'현재 회의의 미확정 음성 그룹에 화자 번호 표시',callback:()=>{void this.guard(()=>this.numberUnknownSpeakers());}});
     this.addCommand({id:'recover',name:'마지막 세션 복구 및 전사 재시도',callback:()=>{void this.guard(()=>this.recover());}});
     this.addCommand({id:'test-audio',name:'테스트 WAV를 현재 노트에 전사',callback:()=>{void this.guard(()=>this.start(this.settings.testAudio));}});
     this.addCommand({id:'controls',name:'상세 보기 / 최소화',hotkeys:[{modifiers:['Mod','Alt'],key:'M'}],callback:()=>{void this.toggleControls();}});
@@ -258,6 +259,7 @@ export default class LocalMeeting extends Plugin {
     this.meeting=data;await this.migrateCurrentNote();this.launch(true);
     } finally {this.transitioning=false;}
   }
+  async numberUnknownSpeakers(){await this.reviewWrite(async()=>{const m=this.meeting;if(!m||this.bridge)throw new Error('회의 종료 후 실행하세요.');if(!await this.editors.ready(m.note))throw new Error('편집기가 사용 중입니다. 입력을 마친 뒤 다시 시도하세요.');const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 노트를 찾을 수 없습니다.');const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);if(m.noteSnapshot!==undefined)rebaseAnchors(m,m.noteSnapshot,doc);const backup=structuredClone(m),ids=numberCandidateGroups(m);try{if(ids.length)await this.renderSegments(ids,'speaker');else await this.saveMeeting();}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)this.meeting=backup;throw e;}this.refresh(true);new Notice(ids.length?`${ids.length}개 발언에 음성 그룹별 화자 번호를 표시했습니다.`:'번호를 표시할 미확정 음성 그룹이 없습니다.');});}
   async reanalyseSpeakers(){
     if(this.bridge||this.transitioning||this.summaryBusy)throw new Error('진행 중인 녹음과 처리가 끝난 뒤 실행하세요.');
     if(!this.meeting)throw new Error('불러온 회의가 없습니다.');
@@ -380,7 +382,7 @@ export default class LocalMeeting extends Plugin {
     }
   }
   updateSpeaker(id:string,name:string){
-    this.writes=this.writes.then(async()=>{const m=this.meeting;if(!m)return;const previous=m.speakers[id];m.speakers[id]=name.trim()||id;m.voiceConfirmedSpeakers=[...new Set([...(m.voiceConfirmedSpeakers??[]),id])];await this.renderSegments(m.segments.filter(s=>s.speaker===id).map(s=>s.id),'speaker');if(previous&&previous!==name&&!/^화자 \d+$/.test(previous))await this.invalidateVoiceForSpeaker(m,id,false);await this.enrollVoiceSpeaker(m,id).catch(e=>new Notice('음성 프로필 수집을 보류했습니다. '+String(e),8000));this.refresh(true);}).catch(error=>this.showError(String(error)));
+    this.writes=this.writes.then(async()=>{const m=this.meeting;if(!m)return;const previous=m.speakers[id];m.speakers[id]=name.trim()||id;if(m.speakerCandidates?.[id]&&!/^화자 \d+$/.test(m.speakers[id]!))delete m.speakerCandidates[id];m.voiceConfirmedSpeakers=[...new Set([...(m.voiceConfirmedSpeakers??[]),id])];await this.renderSegments(m.segments.filter(s=>s.speaker===id).map(s=>s.id),'speaker');if(previous&&previous!==name&&!/^화자 \d+$/.test(previous))await this.invalidateVoiceForSpeaker(m,id,false);await this.enrollVoiceSpeaker(m,id).catch(e=>new Notice('음성 프로필 수집을 보류했습니다. '+String(e),8000));this.refresh(true);}).catch(error=>this.showError(String(error)));
   }
   assignSpeaker(segmentId:string,speaker:string){
     this.writes=this.writes.then(async()=>{const m=this.meeting,s=m?.segments.find(s=>s.id===segmentId);if(!m||!s)return;const before=structuredClone(s),next=speaker.trim()||'unknown';if(before.speaker!==next)await this.invalidateVoiceForSegment(m,before);const userRevision=(s.userRevision??0)+1;s.history=[...(s.history??[]),{at:new Date().toISOString(),before:{text:s.text,speaker:s.speaker,textLocked:s.textLocked,speakerLocked:s.speakerLocked,speakerState:s.speakerState,suggestions:structuredClone(s.suggestions),reviewedRevision:s.reviewedRevision},afterText:s.text,afterSpeaker:next,userRevision}];s.userRevision=userRevision;s.speaker=next;s.speakerLocked=true;s.speakerState='manual';await this.renderSegments([s.id],'speaker');this.refresh(true);}).catch(error=>this.showError(String(error)));
@@ -393,6 +395,7 @@ export default class LocalMeeting extends Plugin {
     m.voiceConfirmedSpeakers=[...new Set([...(m.voiceConfirmedSpeakers??[]),id])];
     const ids:string[]=[];for(const segment of group.segments){const a=m.anchors?.[segment.id];if(segment.speakerLocked||a?.locked||a?.deleted)continue;segment.speaker=id;segment.speakerLocked=true;segment.speakerState='manual';segment.reviewReasons=segment.reviewReasons?.filter(r=>!r.includes('화자')&&!r.includes('음성 그룹'));ids.push(segment.id);}
     for(const [cluster,local] of Object.entries(m.speakerClusters??{}))if(local===candidate)m.speakerClusters![cluster]=id;
+    if(!m.segments.some(s=>s.speaker===candidate)){delete m.speakerCandidates?.[candidate];delete m.speakers[candidate];}
     try{await this.renderSegments(ids,'speaker');}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)this.meeting=backup;throw e;}await this.enrollVoiceSpeaker(m,id).catch(e=>new Notice('음성 프로필 수집을 보류했습니다. '+String(e),8000));this.refresh(true);
   });}
   voiceProfiles(){const root=this.root();if(this.voiceRoot!==root){this.voiceRoot=root;this.voiceStore=new VoiceProfiles(root);}return this.voiceStore!;}
@@ -555,12 +558,13 @@ class MeetingView extends ItemView {
     quick.createEl('button',{text:'OpenAI 정리'}).addEventListener('click',()=>new AIControlsModal(this.app,p).open());
     quick.createEl('button',{text:`회의 사전 · ${p.settings.dictionaryEnabled?'켜짐':'꺼짐'}`}).addEventListener('click',()=>new DictionaryModal(this.app,p).open());
     quick.createEl('button',{text:'음성 프로필'}).addEventListener('click',()=>new VoiceProfilesModal(this.app,p).open());
+    quick.createEl('button',{text:'기존 미확정 화자 번호 적용'}).addEventListener('click',()=>{void p.guard(()=>p.numberUnknownSpeakers());});
     quick.createEl('button',{text:'발언 검토'}).addEventListener('click',()=>new ReviewModal(this.app,p).open());
     const diagnostics=container.createEl('details');diagnostics.dataset.section='diagnostics';diagnostics.open=folds.get('diagnostics')??false;diagnostics.createEl('summary',{text:'입력 장치와 녹음 상태'});this.diagnosticsEl=diagnostics.createEl('p',{text:diagnosticText,cls:'lm-hint',attr:{style:'white-space:pre-line'}});
     if(meeting){
       const participants=container.createEl('details');participants.dataset.section='participants';participants.open=folds.get('participants')??false;participants.createEl('summary',{text:`참여자 · ${participantIds(meeting).length}명`});
       const title=participants.createDiv({cls:'lm-section-title'});title.createSpan({text:'참여자'});const add=title.createEl('button',{cls:'lm-icon-button',attr:{'aria-label':'참여자 추가',title:'참여자 추가'}});setIcon(add,'user-plus');add.addEventListener('click',()=>new ParticipantModal(this.app,p).open());
-      participants.createEl('p',{text:'이름을 지정하면 대화 기록에 반영합니다. 미확정 음성은 발언 검토에서 연결합니다.',cls:'lm-hint'});
+      participants.createEl('p',{text:'화자 번호는 같은 음성으로 추정된 그룹입니다. 이름을 지정하면 해당 발언에 반영됩니다.',cls:'lm-hint'});
       const ids=participantIds(meeting);
       if(!ids.length)participants.createEl('p',{text:'회의 종료 후 화자 구분이 끝나면 참여자가 표시됩니다.',cls:'lm-hint'});
       for(const [index,id] of ids.entries()){const row=participants.createDiv({cls:'lm-participant-row'});row.createSpan({text:`이름 ${index+1}`,cls:'lm-participant-label'});const input=row.createEl('input',{type:'text',value:participantLabel(id,meeting),attr:{'aria-label':`참여자 ${index+1} 이름`,maxlength:'60'}});const save=row.createEl('button',{cls:'lm-icon-button',attr:{'aria-label':`참여자 ${index+1} 이름 저장`,title:'이름 저장 · Enter'}});setIcon(save,'check');const apply=()=>{if(!input.value.trim()){new Notice('화자 이름을 입력해 주세요.');input.focus();return;}p.updateSpeaker(id,input.value);new Notice('화자 이름을 저장했습니다.');};save.addEventListener('click',apply);input.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();apply();}});}

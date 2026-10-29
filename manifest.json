@@ -1,7 +1,7 @@
 {
   "id": "local-meeting",
   "name": "Local Meeting",
-  "version": "0.13.0-beta.1",
+  "version": "0.13.0-beta.2",
   "minAppVersion": "1.11.4",
   "description": "Local Korean meeting transcription with durable audio queues and editable speaker names.",
   "author": "organic4597",

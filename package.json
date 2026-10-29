@@ -1,6 +1,6 @@
 {
   "name": "obsidian-local-meeting",
-  "version": "0.13.0-beta.1",
+  "version": "0.13.0-beta.2",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
