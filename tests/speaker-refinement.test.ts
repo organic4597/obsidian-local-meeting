@@ -38,3 +38,5 @@ test('timestamps appear only at paragraph heads and return after a speaker split
  const meeting=m([s('a',0,2000),s('b',2000,4000)]);let doc=transcriptChanges('',meeting,['a','b'],true).text;assert.equal((doc.match(/\(00:/g)||[]).length,1);
  meeting.segments[1]!.speaker='speaker_2';doc=transcriptChanges(doc,meeting,['b'],true,'speaker').text;assert.equal((doc.match(/\(00:/g)||[]).length,2);assert.match(doc,/\n\n\(00:00:02\) 화자 2:/);
 });
+
+test('offline refinement drops unused provisional identities while protecting manually named live utterances',()=>{const meeting=m([{...s('a',0,3000,'live_1'),speakerLocked:true},s('b',3000,6000,'live_2')]);meeting.speakers={live_1:'김',live_2:'잠정 화자 2'};refineSpeakers(meeting,pass([{start:0,end:3000,speaker:'community_00'},{start:3000,end:6000,speaker:'community_01'}]));assert.equal(meeting.segments[0]!.speaker,'live_1');assert.equal(meeting.speakers.live_1,'김');assert.equal(meeting.speakers.live_2,undefined);});

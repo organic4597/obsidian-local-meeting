@@ -165,3 +165,6 @@
 .lm-review-group .lm-event-candidate > div > p { flex-basis: 100%; margin: 2px 0; }
 .lm-review-group .lm-event-candidate > div > small { flex-basis: 100%; }
 @media (max-width: 720px) { .lm-review-group .lm-event-candidate { flex-wrap: wrap; } .lm-review-group .lm-event-candidate > div { flex-basis: 100%; } }
+.lm-audio-content { color: inherit; text-decoration: none; cursor: pointer; border-radius: 3px; }
+.lm-audio-content:hover { background: var(--background-modifier-hover); text-decoration: underline dotted var(--text-muted); text-underline-offset: 3px; }
+.lm-audio-content:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 3px; }

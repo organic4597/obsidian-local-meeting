@@ -60,6 +60,7 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
   // No text, timings, segment IDs, revisions, edits, or review history are rewritten.
   changed.push(s.id);
  }
+ for(const id of Object.keys(meeting.speakers))if(id.startsWith('live_')&&isUnconfirmedSpeaker(meeting,id)&&!meeting.segments.some(s=>s.speaker===id))delete meeting.speakers[id];
  const warning=expected>pass.detectedSpeakers?`예상 ${expected}명 중 ${pass.detectedSpeakers}개 화자만 검출했습니다. 서로 다른 사람이 합쳐졌을 수 있습니다. 원음을 확인해 새 참여자로 직접 지정하세요.`:'';
  meeting.transcriptMode='dialogue';meeting.speakerPassId=pass.passId;meeting.speakerRefinement={detected:pass.detectedSpeakers,expected,warning,processingSeconds:pass.processingSeconds};
  return changed;

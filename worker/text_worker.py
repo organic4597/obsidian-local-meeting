@@ -1,4 +1,4 @@
-"""Workflow 3: local text-only STT; no real-time speaker model is imported or loaded."""
+"""Local STT with optional isolated rolling Community-1 and full offline refinement."""
 import contextlib,hashlib,json,math,queue,resource,sys,threading,time,gc
 from pathlib import Path
 from capture import Capture
@@ -27,7 +27,10 @@ def run(args,emit):
         cap=SystemCapture(root,audio.put,helper=args.system_audio_helper,app_pid=args.system_audio_pid,device=args.device,seconds=args.chunk_seconds)
     else:cap=Capture(root,audio.put,device=args.device,seconds=args.chunk_seconds)
     hints=PauseHistory(root)
-    realtime=getattr(args,'realtime_input',False);stopped=args.resume or bool(args.input_wav) and not realtime;session=None;failed=False;times=[];fed=set();cursor=committed_cursor(saved,revisions.get('cursor',0));pending_dictionary=None
+    realtime=getattr(args,'realtime_input',False);stopped=args.resume or bool(args.input_wav) and not realtime;session=None;failed=False;times=[];fed=set();cursor=committed_cursor(saved,revisions.get('cursor',0));pending_dictionary=None;live=None
+    if config.get('liveSpeakers') and not done and not args.resume and (not args.input_wav or realtime):
+        from live_speakers import LiveSpeakers
+        live=LiveSpeakers(args,root)
     def commands():
         for line in sys.stdin:
             try:
@@ -75,9 +78,16 @@ def run(args,emit):
                 rows=store.rows();available=max((r[3]/1000 for r in rows),default=0)
                 for r in rows:
                     if r[1] not in fed:hints.add(read_pcm(root/r[1]),r[2]/1000);fed.add(r[1])
-                did_work=False
-                while not failed and cursor<available-.02:
-                    plan=hints.plan(cursor,available,stopped)
+                did_work=False;turns=[];horizon=available
+                if live:
+                    live.update(available);processed,turns,live_error=live.snapshot()
+                    if not stopped and not live_error and (processed>0 and available-processed<12 or processed==0 and time.monotonic()-live.started<30):horizon=max(cursor,min(available,processed-5))
+                while not failed and cursor<horizon-.02:
+                    plan=hints.plan(cursor,horizon,stopped)
+                    if live and turns:
+                        from live_speakers import change_boundary
+                        boundary=change_boundary(turns,round(cursor*1000),round(horizon*1000))
+                        if boundary is not None and (not plan or boundary/1000<plan[1]):plan=(cursor,boundary/1000,boundary/1000,True)
                     if not plan:break
                     a,b,consumed,closed=plan
                     if not closed:break
@@ -89,7 +99,11 @@ def run(args,emit):
                         try:
                             with contextlib.redirect_stdout(sys.stderr):result=session.transcribe((pcm,16000),language='Korean',context=context,max_new_tokens=min(512,max(24,math.ceil((b-a)*40))))
                             raw=result.text.strip();text,changes=postprocess(raw,dictionary);times.append({'seconds':b-a,'processingSeconds':round(time.monotonic()-began,4),'provisional':False})
-                            s={'id':f'u_{round(a*16000):012d}','start':round(a*1000),'end':round(b*1000),'text':text,'rawText':raw,'speaker':'pending','speakerState':'unknown','reviewReasons':[],'textState':'stable','dictionaryRevision':dictionary['revision'],'suggestions':changes}
+                            speaker='pending'
+                            if live and turns:
+                                from live_speakers import speaker_at
+                                speaker=speaker_at(turns,round(a*1000),round(b*1000))
+                            s={'id':f'u_{round(a*16000):012d}','start':round(a*1000),'end':round(b*1000),'text':text,'rawText':raw,'speaker':speaker,'speakerState':'overlap' if speaker=='overlap' else 'unknown','reviewReasons':['실시간 잠정 화자 · 종료 후 재분석'] if live else [],'textState':'stable','dictionaryRevision':dictionary['revision'],'suggestions':changes}
                             value=revisions.put(s)
                             if value:emit({'type':'segment','session':root.name,'segment':value})
                         except Exception as e:failed=True;emit({'type':'error','message':f'전사 실패. 원음은 보존됩니다: {e}'});break
@@ -97,7 +111,7 @@ def run(args,emit):
                 if not failed:
                     for r in rows:
                         if r[4]!='done' and r[3]/1000<=cursor+.02:store.complete(r[0],{'segments':[]})
-                emit({'type':'status',**store.status(),'state':'남은 텍스트 전사 중' if stopped else '녹음 중 · 텍스트 전사','pendingAudioSeconds':round(max(0,available-cursor),2),'diagnostics':{**cap.diagnostics,'updatePolicy':'endpoint-only','diarizationRealtime':False}})
+                emit({'type':'status',**store.status(),'state':'남은 텍스트 전사 중' if stopped else '녹음 중 · 텍스트 전사','pendingAudioSeconds':round(max(0,available-cursor),2),'diagnostics':{**cap.diagnostics,'updatePolicy':'endpoint-only','diarizationRealtime':bool(live),'liveSpeakerLagSeconds':round(max(0,available-live.processed),1) if live else None,'liveSpeakerError':live.error if live else ''}})
                 if stopped and (failed or cursor>=available-.02):break
                 if stopped and not did_work:raise RuntimeError('남은 전사 범위를 확인하지 못했습니다. 원음을 보존합니다.')
                 if not did_work:
@@ -106,9 +120,10 @@ def run(args,emit):
     except BaseException:failed=True;raise
     finally:
         if not stopped:cap.stop()
+        if live:live.close()
         while not audio.empty():
             item=audio.get();store.add(item['path'],item['start'],item['end'])
-        revisions.export();write_atomic(root/'metrics.json',{'schemaVersion':3,'failed':failed,'inference':times,'diarizationRealtime':False,'audio_end_ms':max((r[3] for r in store.rows()),default=0),'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'diagnostics':cap.diagnostics});store.close()
+        revisions.export();write_atomic(root/'metrics.json',{'schemaVersion':3,'failed':failed,'inference':times,'diarizationRealtime':bool(live),'audio_end_ms':max((r[3] for r in store.rows()),default=0),'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'diagnostics':cap.diagnostics});store.close()
         session=None;gc.collect()
         if not done:
             import mlx.core as mx

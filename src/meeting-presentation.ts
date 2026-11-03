@@ -1,6 +1,6 @@
 import {Meeting,Segment} from './model';
 import {needsReview,undoReview} from './quality-model';
-export function isUnconfirmedSpeaker(m:Meeting,id:string){return !!m.speakerCandidates?.[id]||id.startsWith('final_')&&/^새 화자 \d+$/.test(m.speakers[id]??'')&&!m.segments.some(s=>s.speaker===id&&s.speakerLocked);}
+export function isUnconfirmedSpeaker(m:Meeting,id:string){return id.startsWith('live_')&&/^잠정 화자 \d+$/.test(m.speakers[id]??'')||!!m.speakerCandidates?.[id]||id.startsWith('final_')&&/^새 화자 \d+$/.test(m.speakers[id]??'')&&!m.segments.some(s=>s.speaker===id&&s.speakerLocked);}
 export function participantIds(m:Meeting){return [...new Set([...m.segments.map(s=>s.speaker),...Object.keys(m.speakers)])].filter(id=>!['unknown','overlap','pending'].includes(id));}
 export function candidateGroups(m:Meeting){const ids=new Set([...Object.keys(m.speakerCandidates??{}),...Object.keys(m.speakers).filter(id=>isUnconfirmedSpeaker(m,id))]);return [...ids].map(id=>({id,label:m.speakerCandidates?.[id]?.label??'미확정 음성 그룹',segments:m.segments.filter(s=>s.speaker===id||s.speaker==='unknown'&&s.candidates?.some(c=>c.speaker===id&&c.activity>=.85))})).filter(c=>c.segments.length);}
 export function reviewGroups(m:Meeting){const groups=new Map<string,{key:string;label:string;segments:Segment[]}>();for(const s of m.segments){if(m.anchors?.[s.id]?.deleted||!needsReview(s))continue;

@@ -1,21 +1,23 @@
-import {App,Modal,Notice} from 'obsidian';
+import {App,Modal,Notice,setTooltip} from 'obsidian';
 import {EditorView,ViewPlugin,Decoration,DecorationSet,WidgetType,ViewUpdate} from '@codemirror/view';
 import {StateEffect} from '@codemirror/state';
 import {SummaryAudioIndex,playbackRanges,PlaybackRange,recordingPath} from './summary-playback';
 import {audioRange} from './audio-review';
 import {timestamp} from './model';
+import {contentLinks,hrefRanges} from './summary-content';
 const refreshLinks=StateEffect.define<null>();
 interface PlaybackHost {root:()=>string;recording:()=>boolean;systemAudio?:()=>boolean;fileOf:(view:EditorView)=>string|undefined;}
 /** One local player for all summary links; replacing or unloading it always stops audio. */
 export class SummaryAudio {
- readonly extension;private views=new Set<EditorView>();private roots=new Map<HTMLElement,string>();private player?:RangePlayer;private disposed=false;
+ readonly extension;private views=new Set<EditorView>();private roots=new Map<HTMLElement,string>();private player?:RangePlayer;private disposed=false;private linkEvents=new AbortController();private linkOwner=crypto.randomUUID();
  constructor(private app:App,readonly index:SummaryAudioIndex,private host:PlaybackHost){
   const owner=this;
   this.extension=ViewPlugin.fromClass(class {
    decorations:DecorationSet;constructor(readonly view:EditorView){owner.views.add(view);this.decorations=this.build();}
    update(update:ViewUpdate){if(update.docChanged||update.viewportChanged||update.selectionSet||update.transactions.some(t=>t.effects.some(e=>e.is(refreshLinks))))this.decorations=this.build();}
-   build(){const path=owner.host.fileOf(this.view),session=path?owner.index.session(path):undefined;if(!session)return Decoration.none;const ranges=[];
-    for(const visible of this.view.visibleRanges){const text=this.view.state.doc.sliceString(visible.from,visible.to);for(const range of playbackRanges(text)){const from=visible.from+range.from,to=visible.from+range.to;if(this.view.state.selection.ranges.some(s=>s.from<to&&s.to>from||s.empty&&s.head>from&&s.head<to))continue;ranges.push(Decoration.replace({widget:new RangeLink(owner,session,range)}).range(from,to));}}
+   build(){const path=owner.host.fileOf(this.view),session=path?owner.index.session(path):undefined;if(!session)return Decoration.none;const ranges=[];const links=contentLinks(this.view.state.doc.toString());
+    for(const link of links){if(this.view.state.selection.ranges.some(s=>s.from<link.to&&s.to>link.from||s.empty&&s.head>link.from&&s.head<link.to))continue;ranges.push(Decoration.replace({widget:new ContentLink(owner,session,link.text,link.ranges)}).range(link.from,link.to));}
+    for(const visible of this.view.visibleRanges){const text=this.view.state.doc.sliceString(visible.from,visible.to);for(const range of playbackRanges(text)){const from=visible.from+range.from,to=visible.from+range.to;if(links.some(link=>from>=link.from&&to<=link.to))continue;if(this.view.state.selection.ranges.some(s=>s.from<to&&s.to>from||s.empty&&s.head>from&&s.head<to))continue;ranges.push(Decoration.replace({widget:new RangeLink(owner,session,range)}).range(from,to));}}
     return Decoration.set(ranges,true);
    }
    destroy(){owner.views.delete(this.view);}
@@ -23,15 +25,18 @@ export class SummaryAudio {
  }
  refresh(){if(this.disposed)return;for(const view of this.views)view.dispatch({effects:refreshLinks.of(null)});for(const [root,path] of this.roots){if(root.isConnected)this.decorate(root,path);else this.roots.delete(root);}}
  process(root:HTMLElement,path:string){this.roots.set(root,path);this.decorate(root,path);}
- private decorate(root:HTMLElement,path:string){const session=this.index.session(path);if(!session)return;const walk=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes:Text[]=[];let next:Node|null;
+ private decorate(root:HTMLElement,path:string){const session=this.index.session(path);if(!session)return;for(const link of Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href^="local-meeting://audio"]'))){if(link.dataset.lmAudio===this.linkOwner)continue;const ranges=hrefRanges(link.getAttribute('href')??'');if(!ranges.length)continue;link.dataset.lmAudio=this.linkOwner;link.classList.add('lm-audio-content');setTooltip(link,ranges.map(r=>r.label).join(' · ')+' · 클릭하여 녹음 재생');let down:{x:number;y:number}|undefined;link.addEventListener('mousedown',e=>{down={x:e.clientX,y:e.clientY};},{signal:this.linkEvents.signal});link.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();if(down&&Math.hypot(e.clientX-down.x,e.clientY-down.y)>5)return;this.playContent(session,ranges);},{capture:true,signal:this.linkEvents.signal});}const walk=document.createTreeWalker(root,NodeFilter.SHOW_TEXT),nodes:Text[]=[];let next:Node|null;
   while(next=walk.nextNode()){const text=next as Text;if(!text.parentElement?.closest('a,button,code,pre,script,style')&&playbackRanges(text.data).length)nodes.push(text);}
   for(const node of nodes){const fragment=document.createDocumentFragment();let at=0;for(const range of playbackRanges(node.data)){fragment.append(document.createTextNode(node.data.slice(at,range.from)),this.button(session,range));at=range.to;}fragment.append(document.createTextNode(node.data.slice(at)));node.replaceWith(fragment);}
  }
+ content(session:string,text:string,ranges:PlaybackRange[]){const span=document.createElement('span');span.className='lm-audio-content';span.textContent=text;span.tabIndex=0;span.setAttribute('role','link');setTooltip(span,ranges.map(r=>r.label).join(' · ')+' · 클릭하여 녹음 재생');span.addEventListener('click',()=>{if(window.getSelection()?.isCollapsed!==false)this.playContent(session,ranges);});span.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();this.playContent(session,ranges);}});return span;}
+ playContent(session:string,ranges:PlaybackRange[]){if(this.disposed)return;if(ranges.length===1)this.play(session,ranges[0]!);else{const modal=new Modal(this.app);modal.setTitle('재생할 녹음 구간');for(const r of ranges)modal.contentEl.createEl('button',{text:r.label}).addEventListener('click',()=>{modal.close();this.play(session,r);});modal.open();}}
  button(session:string,range:PlaybackRange){const button=document.createElement('button');button.className='lm-audio-range';button.type='button';button.textContent=range.label;button.title='이 구간 녹음 재생';button.setAttribute('aria-label',range.label+' 녹음 재생');button.addEventListener('mousedown',e=>e.preventDefault());button.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();this.play(session,range);});return button;}
  play(session:string,range:PlaybackRange){if(this.disposed)return;if(this.host.recording()&&this.host.systemAudio?.()){new Notice('시스템 오디오를 녹음하는 동안에는 녹음 구간을 재생할 수 없습니다.',8000);return;}this.player?.close();try{this.player=new RangePlayer(this.app,recordingPath(this.host.root(),session),range,this.host.recording);this.player.open();}catch(e){new Notice(String(e),8000);}}
  stop(){this.player?.close();this.player=undefined;}
- dispose(){this.disposed=true;this.stop();for(const root of this.roots.keys())for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('.lm-audio-range')))button.replaceWith(document.createTextNode(button.textContent??''));this.roots.clear();}
+ dispose(){this.disposed=true;this.linkEvents.abort();this.stop();for(const root of this.roots.keys())for(const link of Array.from(root.querySelectorAll<HTMLElement>('[data-lm-audio]'))){delete link.dataset.lmAudio;link.classList.remove('lm-audio-content');}for(const root of this.roots.keys())for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('.lm-audio-range')))button.replaceWith(document.createTextNode(button.textContent??''));this.roots.clear();}
 }
+class ContentLink extends WidgetType {constructor(private owner:SummaryAudio,private session:string,private text:string,private ranges:PlaybackRange[]){super();}eq(other:ContentLink){return this.session===other.session&&this.text===other.text&&JSON.stringify(this.ranges)===JSON.stringify(other.ranges);}toDOM(){return this.owner.content(this.session,this.text,this.ranges);}ignoreEvent(){return true;}}
 class RangeLink extends WidgetType {
  constructor(private owner:SummaryAudio,private session:string,private range:PlaybackRange){super();}
  eq(other:RangeLink){return this.session===other.session&&this.range.start===other.range.start&&this.range.end===other.range.end&&this.range.label===other.range.label;}
