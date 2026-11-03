@@ -25,8 +25,10 @@ export class TextReveal {
  constructor(private final=false){}
  set(text:string,final=this.final){
   if(text===this.target&&final===this.final)return;
-  const next=graphemes(text);let common=0;
+  const next=graphemes(text);let common=0;const prior=this.target;const complete=this.done;
   if(final===this.final)while(common<Math.min(this.shown,next.length)&&this.units[common]===next[common])common++;
+  // Revisions (including later speaker labels) replace the existing preview in place.
+  if(!final&&complete&&prior&&!text.startsWith(prior))common=next.length;
   this.units=next;this.shown=common;this.final=final;this.target=text;this.carry=0;
   this.speed=Math.max(final?65:90,(next.length-common)/(final?8:1.2));
  }
