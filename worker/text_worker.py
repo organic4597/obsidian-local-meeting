@@ -38,11 +38,15 @@ def run(args,emit):
             try:
                 if len(line)>1_000_000:raise ValueError('너무 큰 명령')
                 c=json.loads(line)
-                if c.get('type') not in ('stop','retry','dictionary','ack','resend'):raise ValueError('지원하지 않는 명령')
-                if c['type']=='stop':cap.stop()
-                inbox.put(c)
+                if c.get('type') not in ('stop','retry','dictionary','ack','resend','suspect'):raise ValueError('지원하지 않는 명령')
+                if c['type']=='stop':
+                    try:cap.stop()
+                    finally:inbox.put(c)
+                else:inbox.put(c)
             except Exception:emit({'type':'error','message':'워커 명령을 읽지 못했습니다.'})
-        cap.stop();inbox.put({'type':'stop'})
+        try:cap.stop()
+        except Exception:pass
+        finally:inbox.put({'type':'stop'})
     try:
         if not done:
             if args.input_wav and realtime:
@@ -75,6 +79,9 @@ def run(args,emit):
                     if c['type']=='stop':cap.stop();stopped=True
                     elif c['type']=='ack':
                         if isinstance(c.get('id'),str) and isinstance(c.get('revision'),int) and c['revision']>0:revisions.ack(c['id'],c['revision'])
+                    elif c['type']=='suspect':
+                        ids=revisions.get('suspectIds',[]);ident=c.get('id');
+                        if isinstance(ident,str):revisions.set('suspectIds',list(dict.fromkeys([*ids,ident]))[-500:])
                     elif c['type']=='resend':
                         for s in revisions.all():emit({'type':'segment','session':root.name,'segment':s})
                     elif c['type']=='retry':failed=False;phrase=None;store.retry()
@@ -129,7 +136,7 @@ def run(args,emit):
                             if live and turns:
                                 from live_speakers import speaker_at
                                 speaker=speaker_at(turns,round(a*1000),round(b*1000))
-                            s={'id':f'u_{round(a*16000):012d}','start':round(a*1000),'end':round(b*1000),'text':text,'rawText':raw,'speaker':speaker,'speakerState':'overlap' if speaker=='overlap' else 'unknown','reviewReasons':['실시간 잠정 화자 · 종료 후 재분석'] if live else [],'textState':'stable' if closed else 'provisional','dictionaryRevision':dictionary['revision'],'suggestions':changes}
+                            s={'id':f'u_{round(a*16000):012d}','start':round(a*1000),'end':round(b*1000),'text':text,'rawText':raw,'speaker':speaker,'speakerState':'overlap' if speaker=='overlap' else 'unknown','reviewReasons':['실시간 잠정 화자 · 종료 후 재분석'] if live else [],'streamRewrites':phrase.rewrites if phrase else 0,'textState':'stable' if closed else 'provisional','dictionaryRevision':dictionary['revision'],'suggestions':changes}
                             value=revisions.put(s)
                             if value:emit({'type':'segment','session':root.name,'segment':value})
                             if not closed:did_work=True;continue
@@ -145,17 +152,37 @@ def run(args,emit):
                 if not did_work:
                     try:inbox.put(inbox.get(timeout=.2))
                     except queue.Empty:pass
+            if not failed and session and config.get('retranscribeAfterStop'):
+                try:
+                    revisions.export()
+                    from retranscribe import run as retranscribe
+                    emit({'type':'status',**store.status(),'state':'의심 구간 재전사 후보 생성 중'})
+                    requested=set(revisions.get('suspectIds',[]))
+                    from retranscribe import reason
+                    ids=[s['id'] for s in revisions.all() if s['id'] in requested or reason(s)]
+                    retranscribe(root,session,context,ids=ids)
+                except Exception as e:emit({'type':'status',**store.status(),'state':'재전사 후보 보류 · 상세 보기에서 다시 시도 가능','diagnostics':{**cap.diagnostics,'retranscriptionError':str(e)}})
     except BaseException:failed=True;raise
     finally:
-        if not stopped:cap.stop()
-        if live:live.close()
-        while not audio.empty():
-            item=audio.get();store.add(item['path'],item['start'],item['end'])
-        revisions.export();write_atomic(root/'metrics.json',{'schemaVersion':3,'failed':failed,'inference':times,'diarizationRealtime':bool(live),'audio_end_ms':max((r[3] for r in store.rows()),default=0),'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'diagnostics':cap.diagnostics});store.close()
-        session=None;gc.collect()
+        from worker_cleanup import cleanup
+        def drain():
+            errors=[]
+            while not audio.empty():
+                item=audio.get()
+                try:store.add(item['path'],item['start'],item['end'])
+                except Exception as e:errors.append(str(e))
+            if errors:raise RuntimeError('; '.join(errors))
+        def mark_cleanup_error(error):
+            nonlocal failed
+            failed=True
+        errors=cleanup([('오디오 종료',lambda:cap.stop() if not stopped else None),('화자 종료',lambda:live.close() if live else None),('큐 등록',drain),('전사 체크포인트',revisions.export),('메트릭',lambda:write_atomic(root/'metrics.json',{'schemaVersion':3,'failed':failed,'inference':times,'diarizationRealtime':bool(live),'audio_end_ms':max((r[3] for r in store.rows()),default=0),'peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'diagnostics':cap.diagnostics})),('DB 종료',store.close)],mark_cleanup_error)
+        if errors:failed=True;emit({'type':'error','message':'정리 단계 오류 · 원음으로 복구 가능: '+'; '.join(errors)})
+        phrase=None;session=None;gc.collect()
         if not done:
-            import mlx.core as mx
-            mx.clear_cache()
+            try:
+                import mlx.core as mx
+                mx.clear_cache()
+            except Exception:pass
     if not failed:
         try:
             from community_pipeline import finalize

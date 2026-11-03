@@ -49,7 +49,7 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
   const e=spans.get(s.id)!,best=[...e.single].sort((a,b)=>b[1]-a[1])[0];
   const match=best?mapping.get(best[0]):undefined;
   const speaker=e.overlap>=200?'overlap':best&&!conflicts.has(best[0])&&best[1]/Math.max(1,e.speech)>=.85?match!:'unknown';
-  const reasons=(s.reviewReasons??[]).filter(x=>!['화자 활동 근거 부족','화자 전환 경계 확인 필요','동시 활성 발언 확인 필요'].includes(x));
+  const reasons=(s.reviewReasons??[]).filter(x=>!['실시간 잠정 화자 · 종료 후 재분석','화자 활동 근거 부족','화자 전환 경계 확인 필요','동시 활성 발언 확인 필요'].includes(x));
   if(speaker==='unknown')reasons.push('종료 후 화자 경계 확인 필요');
   if(speaker==='overlap')reasons.push('종료 후 동시 발언 확인 필요');
   if(match?.startsWith('candidate_'))reasons.push('미확정 음성 그룹 연결 가능');

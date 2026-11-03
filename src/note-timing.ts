@@ -23,7 +23,9 @@ export function timeNoteChanges(meeting:Meeting,changes:ChangeSet,clock:NoteCloc
  });
  meeting.noteTimings=marks;
 }
-export function timedNotes(meeting:Meeting,document:string){return (meeting.noteTimings??[]).filter(m=>!m.deleted&&m.from>=0&&m.to<=document.length).map(m=>({...m,text:document.slice(m.from,m.to),nearbySpeech:meeting.segments.filter(s=>s.end>=m.start-10000&&s.start<=m.end+10000).map(s=>s.id)}));}
+export function timedNotes(meeting:Meeting,document:string){
+ if(meeting.noteTimingSnapshot!==undefined&&meeting.noteTimingSnapshot!==document){const copy={...meeting,noteTimings:structuredClone(meeting.noteTimings??[])};timeNoteChanges(copy,ChangeSet.of(textEdits(meeting.noteTimingSnapshot,document),meeting.noteTimingSnapshot.length),null,false);meeting=copy;}
+ return (meeting.noteTimings??[]).filter(m=>!m.deleted&&m.from>=0&&m.to<=document.length).map(m=>({...m,text:document.slice(m.from,m.to),nearbySpeech:meeting.segments.filter(s=>s.end>=m.start-10000&&s.start<=m.end+10000).map(s=>s.id)}));}
 
 export function timeNoteDocument(meeting:Meeting,before:string,after:string,changes:ChangeSet,clock:NoteClock|null,user=true){
  if(meeting.noteTimingSnapshot===after)return;

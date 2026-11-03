@@ -1,12 +1,16 @@
-import {Meeting,SpeakerRefinement} from './model';
+import {Meeting,SpeakerRefinement,segmentText} from './model';
 import {transcriptChanges} from './editor-changes';
 import {splitAlignedSpeakers} from './aligned-speakers';
 import {refineSpeakers} from './speaker-refinement';
 
 /** Preview text never becomes a Markdown edit until explicitly committed. */
 export function previewText(meeting:Meeting,showTime=false){
- const copy=structuredClone(meeting);copy.rendered={};copy.anchors={};copy.noteSnapshot='';if(copy.segments.some(s=>s.speakerLocked||s.speaker.startsWith('live_')||s.speaker==='overlap'))copy.transcriptMode='dialogue';
- return transcriptChanges('',copy,copy.segments.map(s=>s.id),showTime).text.trimEnd();
+ const speaker=meeting.transcriptMode!=='text-only'||meeting.segments.some(s=>s.speakerLocked||s.speaker.startsWith('live_')||s.speaker==='overlap');
+ const parts:string[]=[];let previous:Meeting['segments'][number]|undefined;
+ for(const s of meeting.segments){const inline=previous&&previous.speaker===s.speaker&&(!speaker||s.speaker!=='unknown'&&s.speaker!=='overlap')&&s.start>=previous.start&&s.start-previous.end<(meeting.paragraphPauseMs??2500);
+  parts.push(previous?(inline?' ':'\n\n'):'',segmentText(s,meeting.speakers,inline?false:showTime,inline?false:speaker));previous=s;
+ }
+ return parts.join('').trimEnd();
 }
 /** Align against a virtual transcript, without borrowing positions from the user's notes. */
 export function refinePreview(meeting:Meeting,pass:SpeakerRefinement,expected=0){

@@ -1,3 +1,4 @@
+import {CorrectionCandidates} from './correction-candidates';
 import {Transaction} from '@codemirror/state';
 import {noteClock,timeNoteDocument,timedNotes} from './note-timing';
 import {App,MarkdownView,FileSystemAdapter,ItemView,Notice,Plugin,PluginSettingTab,Setting,TFile,WorkspaceLeaf,Modal,normalizePath,setIcon,editorInfoField,TFolder} from 'obsidian';
@@ -7,7 +8,7 @@ import {existsSync} from 'node:fs';
 import {join,isAbsolute,dirname,basename} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {release as osRelease} from 'node:os';
-import {mkdir,writeFile,readFile,rename,copyFile,readdir} from 'node:fs/promises';
+import {mkdir,writeFile,readFile,rename,copyFile,readdir,unlink} from 'node:fs/promises';
 import {hoverRecordingRanges} from './summary-content';
 import {SummaryAudioIndex,playbackRanges} from './summary-playback';
 import {SummaryReviewStore,ReviewItem} from './summary-review';
@@ -58,7 +59,7 @@ export default class LocalMeeting extends Plugin {
   private overlayReview!:HTMLElement;
   private overlayDrag?:ReturnType<typeof attachOverlayDrag>;
   private popup!:HTMLElement;
-  private persistTimer?:number;
+  private persistTimer?:number;private checkpointTimer?:ReturnType<typeof setTimeout>;private candidatesStore?:CorrectionCandidates;private candidatesRoot='';
   async onload(){
     const saved=await this.loadData();
     if(saved&&typeof saved==='object'){
@@ -128,6 +129,8 @@ export default class LocalMeeting extends Plugin {
     this.addCommand({id:'voice-profiles',name:'화자 음성 프로필 관리',callback:()=>new VoiceProfilesModal(this.app,this).open()});
     this.addCommand({id:'dictionary-toggle',name:'회의 사전 켜기 / 끄기',callback:()=>{this.settings.dictionaryEnabled=!this.settings.dictionaryEnabled;void this.guard(()=>this.dictionaryChanged());}});
     this.addCommand({id:'dictionary-selection',name:'선택한 표현을 사전에 추가',callback:()=>{void this.guard(async()=>{const selection=this.app.workspace.getActiveViewOfType(MarkdownView)?.editor.getSelection()??'';const data=await this.dictionary().request({type:'list'});new TermModal(this.app,this,data,undefined,undefined,selection).open();});}});
+    this.addCommand({id:'correction-candidates',name:'반복 오인식 사전 후보',callback:()=>{void this.guard(()=>this.openCorrectionCandidates());}});
+    this.addCommand({id:'retranscription-candidates',name:'종료 후 재전사 후보',callback:()=>{void this.guard(()=>this.openRetranscriptionCandidates());}});
     this.addCommand({id:'review',name:'확인 필요한 발언 검토',callback:()=>new ReviewModal(this.app,this).open()});
     this.addCommand({id:'ai-summary',name:'OpenAI 요약·할 일·일정 정리',callback:()=>new AIControlsModal(this.app,this).open()});
     this.addCommand({id:'refine-speakers',name:'현재 회의 종료 후 화자 재분석',callback:()=>{void this.guard(()=>this.reanalyseSpeakers());}});
@@ -240,7 +243,7 @@ export default class LocalMeeting extends Plugin {
     await mkdir(directory,{recursive:true});
     const dictionary=await this.dictionary().request({type:'snapshot',project:this.settings.dictionaryProject,meeting:id,enabled:this.settings.dictionaryEnabled});
     const modelConfig=await readFile(join(this.settings.model,'config.json'),'utf8');
-    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',streamingSTT:true,audioMode:participantLimit.audio,voiceProfiles:participantLimit.voiceProfiles,liveSpeakers:participantLimit.liveSpeakers,dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
+    await writeFile(join(directory,'pipeline.json'),JSON.stringify({schemaVersion:3,workflow:'text-then-community',streamingSTT:true,retranscribeAfterStop:true,audioMode:participantLimit.audio,voiceProfiles:participantLimit.voiceProfiles,liveSpeakers:participantLimit.liveSpeakers,dictionary:dictionary.snapshot,speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,asrConfigHash:createHash('sha256').update(modelConfig).digest('hex'),pluginVersion:this.manifest.version},null,2));
     if(!inputWav)this.settings.voiceProfilesEnabled=participantLimit.voiceProfiles;
     this.meeting={id,note:note.path,directory,started:new Date().toISOString(),speakers:{},segments:[],rendered:{},paragraphPauseMs:this.settings.paragraphPauseSeconds*1000,pipelineVersion:3,transcriptMode:'text-only',presentation:'ghost',speakerCount:participantLimit.count,speakerCountMode:participantLimit.mode,dictionaryRevision:dictionary.snapshot.revision};
     await this.saveMeeting();
@@ -309,11 +312,11 @@ export default class LocalMeeting extends Plugin {
         if(!existsSync(backupPath))await writeFile(backupPath,JSON.stringify(backup,null,2),{flag:'wx'});
         const expected=(meeting.speakerCount??this.settings.expectedSpeakers)||Object.keys(meeting.speakers).filter(id=>!['unknown','overlap'].includes(id)&&!id.startsWith('final_')).length;
         if(meeting.presentation&&meeting.presentation!=='document'){
-          refinePreview(meeting,event,expected);await this.applyVoiceAutoMatches(meeting).catch(e=>{new Notice('프로필 비교를 보류했습니다. '+String(e),8000);return [];});await this.saveMeeting();await this.finishPreview();if((meeting.presentation as string)==='document'){await this.collectConfirmedVoice(meeting);await this.collectAutoVoice(meeting).catch(e=>new Notice('음성 특징 자동 수집을 보류했습니다. '+String(e),8000));}
+          refinePreview(meeting,event,expected);await this.loadRetranscriptions();await this.applyVoiceAutoMatches(meeting).catch(e=>{new Notice('프로필 비교를 보류했습니다. '+String(e),8000);return [];});await this.saveMeeting();await this.finishPreview();if((meeting.presentation as string)==='document'){await this.collectConfirmedVoice(meeting);await this.collectAutoVoice(meeting).catch(e=>new Notice('음성 특징 자동 수집을 보류했습니다. '+String(e),8000));}
           this.refresh(true);return;
         }
         splitAlignedSpeakers(meeting,event,doc);
-        const ids=refineSpeakers(meeting,event,expected);ids.push(...await this.applyVoiceAutoMatches(meeting).catch(e=>{new Notice('프로필 비교를 보류했습니다. '+String(e),8000);return [];}));
+        const ids=refineSpeakers(meeting,event,expected);await this.loadRetranscriptions();ids.push(...await this.applyVoiceAutoMatches(meeting).catch(e=>{new Notice('프로필 비교를 보류했습니다. '+String(e),8000);return [];}));
         try{await this.renderSegments(ids,'speaker');}
         catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)this.meeting=backup;throw e;}
         await this.collectConfirmedVoice(meeting);
@@ -333,7 +336,7 @@ export default class LocalMeeting extends Plugin {
         if(accepted){
           if(/^live_\d+$/.test(accepted.segment.speaker))meeting.speakers[accepted.segment.speaker]??='잠정 화자 '+accepted.segment.speaker.slice(5);
           if(index>=0)meeting.segments[index]=accepted.segment;else meeting.segments.push(accepted.segment);
-          try{await this.renderSegments([event.segment.id],accepted.mode);}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted){if(previous)meeting.segments[index]=previous;else meeting.segments=meeting.segments.filter(s=>s.id!==event.segment.id);}throw e;}
+          try{await this.renderSegments([event.segment.id],accepted.mode,false);}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted){if(previous)meeting.segments[index]=previous;else meeting.segments=meeting.segments.filter(s=>s.id!==event.segment.id);}throw e;}
         }else if(this.persistFailed)await this.saveMeeting();
         if(event.segment.revision)this.bridge?.command({type:'ack',id:event.segment.id,revision:event.segment.revision});
       }).catch(error=>this.showError(String(error)));
@@ -355,9 +358,9 @@ export default class LocalMeeting extends Plugin {
     const snapshot=JSON.stringify(meeting,null,2);
     try{if(editorView instanceof MarkdownView)await editorView.save();const file=join(meeting.directory,'meeting.json');await writeFile(file+'.tmp',snapshot);await rename(file+'.tmp',file);this.audioIndex?.register(meeting.aiSummary?.note,meeting.id);await this.audioIndex?.flush();this.persistFailed=false;}catch(e){this.persistFailed=true;throw e;}
   }
-  private async renderSegments(ids:string[],mode:'normal'|'time'|'speaker'='normal'){
+  private async renderSegments(ids:string[],mode:'normal'|'time'|'speaker'='normal',checkpoint=true){
     const meeting=this.meeting;if(!meeting)return;
-    if(meeting.presentation&&meeting.presentation!=='document'){this.showPreview();await this.saveMeeting();this.refresh();return;}
+    if(meeting.presentation&&meeting.presentation!=='document'){this.showPreview();if(checkpoint||this.persistFailed)await this.saveMeeting();else if(!this.checkpointTimer){const id=meeting.id;this.checkpointTimer=setTimeout(()=>{this.checkpointTimer=undefined;if(this.meeting?.id===id)this.writes=this.writes.then(()=>this.saveMeeting()).catch(e=>this.showError(String(e)));},3000);}this.refresh();return;}
     const file=this.app.vault.getAbstractFileByPath(normalizePath(meeting.note));
     if(!(file instanceof TFile))throw new Error('회의 대상 노트를 찾을 수 없습니다. 원본 오디오는 저장됩니다.');
     if(!await this.editors.ready(meeting.note))return;
@@ -429,6 +432,22 @@ export default class LocalMeeting extends Plugin {
     });await this.dictionaryUpdates;
   }
   async exportDictionary(format:'json'|'csv'){const data=await this.dictionary().request({type:'export'});const folder=join(this.root(),'.local-meeting-quality','exports');await mkdir(folder,{recursive:true});const target=join(folder,`dictionary-${Date.now()}.${format}`);await writeFile(target,format==='json'?JSON.stringify({schemaVersion:1,terms:data.terms},null,2):dictionaryCsv(data.terms));require('electron').shell.showItemInFolder(target);}
+  private correctionCandidates(){const root=this.root(),vault=(this.app.vault.adapter as FileSystemAdapter).getBasePath();const key=root+vault;if(this.candidatesRoot!==key){this.candidatesRoot=key;this.candidatesStore=new CorrectionCandidates(join(root,'.local-meeting-quality','correction-candidates-'+createHash('sha256').update(vault).digest('hex').slice(0,16)+'.json'));}return this.candidatesStore!;}
+  async openCorrectionCandidates(){
+    const m=this.meeting,store=this.correctionCandidates();if(m)for(const s of m.segments)if(s.history?.length)await store.observe(m.id,s);
+    const candidates=await store.list(),modal=new Modal(this.app);modal.setTitle('반복 오인식 사전 후보');modal.contentEl.createEl('p',{text:'서로 다른 발언에서 2회 이상 확인된 교정을 모았습니다. 의미 수정일 수도 있으므로 확인 전에는 인식 규칙에 사용하지 않습니다.',cls:'lm-hint'});
+    const visible=candidates.filter(c=>c.status==='pending');if(!visible.length)modal.contentEl.createEl('p',{text:'반복된 교정 후보가 없습니다. 발언 검토에서 대사를 교정하면 수집됩니다.'});
+    for(const c of visible){const row=modal.contentEl.createEl('details');row.createEl('summary',{text:`${c.before} → ${c.after} · ${c.count}개 발언${c.conflict?' · 서로 다른 교정 있음':''}`});row.createEl('p',{text:'확인한 뒤 인식 힌트 또는 교정 제안으로 등록하세요.'});row.createEl('button',{text:'사전 등록 검토'}).addEventListener('click',()=>{void this.dictionary().request({type:'list'}).then(data=>new TermModal(this.app,this,data,undefined,async()=>{await store.status(c.id,'accepted');modal.close();},'',{canonical:c.after,observedErrors:[c.before]}).open()).catch(e=>new Notice(String(e)));});row.createEl('button',{text:'후보에서 제외'}).addEventListener('click',()=>{void store.status(c.id,'dismissed').then(()=>{row.remove();}).catch(e=>new Notice(String(e)));});}modal.open();
+  }
+  async markSuspect(id:string){await this.reviewWrite(async()=>{const s=this.meeting?.segments.find(s=>s.id===id);if(!s)throw new Error('발언이 없습니다.');s.suspect=true;this.bridge?.command({type:'suspect',id});await this.saveMeeting();new Notice('종료 후 재전사할 의심 구간으로 표시했습니다.');});}
+  private async loadRetranscriptions(){const m=this.meeting;if(!m)return;try{const data=JSON.parse(await readFile(join(m.directory,'retranscription.json'),'utf8'));for(const s of m.segments){const candidate=data.items?.[s.id];if(candidate&&typeof candidate.text==='string'&&candidate.text.length<=10000&&candidate.start===s.start&&candidate.end===s.end){const state=s.retranscription?.text===candidate.text?s.retranscription!.state:'candidate';s.retranscription={...candidate,state};}}}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}}
+  async retranscribeSegment(id:string){
+    const m=this.meeting;if(!m||this.bridge||this.summaryBusy)throw new Error('회의와 후처리가 끝난 뒤 실행하세요.');if(!m.segments.some(s=>s.id===id))throw new Error('발언이 없습니다.');
+    const adapter=this.app.vault.adapter as FileSystemAdapter;const session=m.id;this.summaryBusy=true;this.refresh();
+    const target=m.segments.find(s=>s.id===id)!,request=join(m.directory,'retranscription-request-'+randomUUID()+'.json');
+    try{await this.writes;await writeFile(request,JSON.stringify({id,start:target.start,end:target.end,text:target.text,rawText:target.rawText}),{mode:0o600});const {stdout}=await promisify(execFile)(this.settings.python,['-u',join(adapter.getBasePath(),this.manifest.dir!,'worker/retranscribe.py'),'--session',m.directory,'--model',this.settings.model,'--id',id,'--request',request],{timeout:180000,maxBuffer:8000000,env:{...process.env,HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1'}});const result=JSON.parse(stdout);if(result.errors?.[id]||!result.items?.[id])throw new Error('재전사 후보를 만들지 못했습니다. 원음과 교정은 보존됩니다.');if(this.meeting?.id!==session)return;delete target.retranscription;await this.loadRetranscriptions();await this.saveMeeting();new Notice('재전사 후보를 만들었습니다. 원문과 화자 지정은 유지됩니다.');}finally{await unlink(request).catch(()=>{});this.summaryBusy=false;this.refresh(true);}
+  }
+  async openRetranscriptionCandidates(){await this.loadRetranscriptions();const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');const modal=new Modal(this.app);modal.setTitle('종료 후 재전사 후보');try{const data=JSON.parse(await readFile(join(m.directory,'retranscription.json'),'utf8'));for(const [id,value] of Object.entries(data.items??{})){const c=value as import('./model').Retranscription,row=modal.contentEl.createEl('details');row.createEl('summary',{text:`${timestamp(c.start)}–${timestamp(c.end)} · ${c.reason}`});row.createEl('p',{text:'기존 인식: '+c.sourceText});row.createEl('p',{text:'동일 구간 재전사: '+c.text});if(c.contextText)row.createEl('p',{text:'전후 음성을 포함한 참고 후보 (인접 발언 포함): '+c.contextText});row.createEl('p',{text:m.segments.some(s=>s.id===id&&s.start===c.start&&s.end===c.end)?'발언 검토에서 후보를 확인·편집해 적용할 수 있습니다.':'최종 화자 분석으로 나뉜 원본 구간입니다. 각 발언을 직접 검토해 주세요.',cls:'lm-hint'});}if(data.pending?.length)modal.contentEl.createEl('p',{text:`이번 처리 한도를 넘긴 후보 ${data.pending.length}개는 보류됐습니다.`});}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;modal.contentEl.createEl('p',{text:'생성된 후보가 없습니다. 발언 검토에서 의심 구간을 표시하거나 종료 후 다시 전사할 수 있습니다.'});}modal.open();}
   private async reviewWrite(action:()=>Promise<void>){const next=this.writes.then(action);this.writes=next.catch(e=>this.showError(String(e)));await next;}
   async reviewApply(id:string,revision:number,before:string,text:string,speaker:string){await this.reviewWrite(async()=>{
     const m=this.meeting,s=m?.segments.find(x=>x.id===id);if(!m||!s)throw new Error('현재 회의에 없는 발언입니다.');
@@ -436,10 +455,10 @@ export default class LocalMeeting extends Plugin {
     const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);if(m.noteSnapshot!==undefined)rebaseAnchors(m,m.noteSnapshot,doc);
     if(m.anchors?.[id]?.locked||m.anchors?.[id]?.deleted)throw new Error('본문에서 직접 수정하거나 삭제한 발언입니다. 노트에서 확인해 주세요.');
     if(!['unknown','overlap',...m.segments.map(x=>x.speaker),...Object.keys(m.speakers)].includes(speaker))throw new Error('현재 회의의 참여자를 선택해 주세요.');
-    const backup=structuredClone(s);reviewEdit(structuredClone(s),revision,before,text,speaker);if(backup.speaker!==speaker)await this.invalidateVoiceForSegment(m,backup);try{reviewEdit(s,revision,before,text,speaker);await this.renderSegments([id]);}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)m.segments[m.segments.indexOf(s)]=backup;throw e;}this.refresh(true);
+    const backup=structuredClone(s);reviewEdit(structuredClone(s),revision,before,text,speaker);if(backup.speaker!==speaker)await this.invalidateVoiceForSegment(m,backup);try{reviewEdit(s,revision,before,text,speaker);await this.renderSegments([id]);await this.correctionCandidates().observe(m.id,s).catch(e=>new Notice('교정 후보 수집 보류: '+String(e)));}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)m.segments[m.segments.indexOf(s)]=backup;throw e;}this.refresh(true);
   });}
-  async reviewKeep(id:string,revision:number){await this.reviewWrite(async()=>{const s=this.meeting?.segments.find(x=>x.id===id);if(!s||(s.revision??0)!==revision)throw new Error('발언이 변경되었습니다. 새로고침해 주세요.');s.reviewedRevision=revision;await this.saveMeeting();this.refresh(true);});}
-  async reviewUndo(id:string){await this.reviewWrite(async()=>{const m=this.meeting,s=m?.segments.find(x=>x.id===id);if(!m||!s)throw new Error('발언이 없습니다.');await this.editors.ready(m.note);const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 노트가 없습니다.');const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);if(m.noteSnapshot!==undefined)rebaseAnchors(m,m.noteSnapshot,doc);if(m.anchors?.[id]?.locked||m.anchors?.[id]?.deleted)throw new Error('본문 수정이 있어 자동으로 되돌릴 수 없습니다.');const backup=structuredClone(s),removedName=s.history?.at(-1)?.speakerNameBefore;try{undoReview(s);if(removedName&&!m.speakers[s.speaker])m.speakers[s.speaker]=removedName;await this.renderSegments([id]);}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)m.segments[m.segments.indexOf(s)]=backup;throw e;}this.refresh(true);});}
+  async reviewKeep(id:string,revision:number){await this.reviewWrite(async()=>{const s=this.meeting?.segments.find(x=>x.id===id);if(!s||(s.revision??0)!==revision)throw new Error('발언이 변경되었습니다. 새로고침해 주세요.');s.reviewedRevision=revision;if(s.retranscription)s.retranscription.state='dismissed';await this.saveMeeting();this.refresh(true);});}
+  async reviewUndo(id:string){await this.reviewWrite(async()=>{const m=this.meeting,s=m?.segments.find(x=>x.id===id);if(!m||!s)throw new Error('발언이 없습니다.');await this.editors.ready(m.note);const file=this.app.vault.getAbstractFileByPath(m.note);if(!(file instanceof TFile))throw new Error('회의 노트가 없습니다.');const doc=this.editors.find(m.note)?.state.doc.toString()??await this.app.vault.read(file);if(m.noteSnapshot!==undefined)rebaseAnchors(m,m.noteSnapshot,doc);if(m.anchors?.[id]?.locked||m.anchors?.[id]?.deleted)throw new Error('본문 수정이 있어 자동으로 되돌릴 수 없습니다.');const backup=structuredClone(s),removedName=s.history?.at(-1)?.speakerNameBefore;try{undoReview(s);if(removedName&&!m.speakers[s.speaker])m.speakers[s.speaker]=removedName;await this.renderSegments([id]);await this.correctionCandidates().observe(m.id,s).catch(e=>new Notice('교정 후보 수집 보류: '+String(e)));}catch(e){if(!(e as {noteCommitted?:boolean}).noteCommitted)m.segments[m.segments.indexOf(s)]=backup;throw e;}this.refresh(true);});}
   async exportDiagnostics(){const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');const target=join(m.directory,'diagnostics.json');await writeFile(target,JSON.stringify({schemaVersion:1,pluginVersion:this.manifest.version,pipelineVersion:m.pipelineVersion??1,session:m.id,diagnostics:this.diagnostics,segments:m.segments.length,review:m.segments.filter(needsReview).length,speakerCounts:m.segments.reduce<Record<string,number>>((counts,s)=>{counts[s.speaker]=(counts[s.speaker]??0)+1;return counts;},{})},null,2));require('electron').shell.showItemInFolder(target);}
   async exportEvaluation(){const m=this.meeting;if(!m)throw new Error('회의가 없습니다.');const target=join(m.directory,'reference-template.json');if(existsSync(target))throw new Error('기존 정답 양식을 덮어쓰지 않습니다. 파일명을 바꾼 뒤 다시 내보내세요.');await writeFile(target,JSON.stringify({schemaVersion:1,instructions:'원음을 듣고 referenceText와 referenceSpeakers를 채우세요. 비어 있는 양식은 정확도 점수를 계산하지 않습니다.',segments:m.segments.map(s=>({id:s.id,start:s.start,end:s.end,hypothesis:s.rawText??s.text,referenceText:null,referenceSpeakers:null}))},null,2),{flag:'wx'});require('electron').shell.showItemInFolder(target);}
   aiStatus(){return this.auth.status();}
@@ -538,7 +557,7 @@ export default class LocalMeeting extends Plugin {
     }catch(e){this.state='AI 정리 실패 · 다시 시도 가능';throw e;}finally{this.summaryBusy=false;this.refresh(true);}
   }
   stop(){if(this.bridge&&!this.closing){this.closing=true;this.state='녹음 종료 요청 / 남은 전사 처리';this.bridge.stop();this.refresh();}}
-  onunload(){this.summaryAudio?.dispose();this.editors?.dispose();window.clearTimeout(this.persistTimer);this.bridge?.dispose();this.auth?.cancel();this.overlay?.remove();}
+  onunload(){this.summaryAudio?.dispose();this.editors?.dispose();window.clearTimeout(this.persistTimer);clearTimeout(this.checkpointTimer);this.bridge?.dispose();this.auth?.cancel();this.overlay?.remove();}
 }
 function participantLabel(id:string,meeting:Meeting){return speakerName({id:'',speaker:id,text:'',start:0,end:0},meeting.speakers);}
 class ParticipantModal extends Modal {

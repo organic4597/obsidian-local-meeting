@@ -23,9 +23,10 @@ class OnlineLabels:
                     if math.isfinite(score):scores.append((key,score))
                 scores.sort(key=lambda x:-x[1])
                 if scores and scores[0][1]>=.9 and (len(scores)==1 or scores[0][1]-scores[1][1]>=.1):chosen=scores[0][0]
-            if chosen is None and self.next_id<=self.maximum:chosen=f'live_{self.next_id}';self.next_id+=1
+            if chosen is None:chosen=f'live_{self.next_id}';self.next_id+=1
             chosen=chosen or 'unknown';mapping[label]=chosen
-            if chosen!='unknown':used.add(chosen);self.vectors[chosen]=vectors.get(label,[])
+            if chosen!='unknown':used.add(chosen);self.vectors.pop(chosen,None);self.vectors[chosen]=vectors.get(label,[])
+            while len(self.vectors)>64:self.vectors.pop(next(iter(self.vectors)))
         mapped=[{**t,'speaker':mapping[t['speaker']]} for t in turns];self.previous=mapped;return mapped
 
 class LiveSpeakers:
