@@ -7,5 +7,5 @@ export async function createMeetingNote(vault:NoteVault,intent:NotePreparation,s
  const folder=meetingDayFolder(intent.folder,intent.started);
  if(intent.path&&vault.kind(intent.path)){if(intent.created)return intent.path;throw new Error('이전 회의록 준비 기록이 있습니다. 문서를 확인한 뒤 계속하세요.');}
  let path='';for(const part of folder.split('/')){path=path?path+'/'+part:part;const kind=vault.kind(path);if(kind==='file')throw new Error('회의록 폴더 위치에 파일이 있습니다.');if(!kind)try{await vault.mkdir(path);}catch(e){if(vault.kind(path)!=='folder')throw e;}}
- for(let i=1;i<=1000;i++){const candidate=`${folder}/회의록${i===1?'':' '+i}.md`;if(vault.kind(candidate))continue;intent.path=candidate;intent.created=false;await save();try{await vault.create(candidate,'');}catch(e){if(vault.kind(candidate)==='file'){intent.path=undefined;continue;}throw e;}intent.created=true;await save();return candidate;}throw new Error('같은 날짜의 회의록이 너무 많습니다. 저장 폴더를 확인하세요.');
+ for(let i=1;i<=1000;i++){const candidate=`${folder}/회의록${i===1?'':' '+i}.md`;if(vault.kind(candidate))continue;intent.path=candidate;intent.created=false;await save();try{await vault.create(candidate,'');}catch(e){if(vault.kind(candidate)==='file')throw new Error('회의록 파일은 생성됐지만 완료 응답을 확인하지 못했습니다. 준비 문서를 확인해 주세요.');throw e;}intent.created=true;await save();return candidate;}throw new Error('같은 날짜의 회의록이 너무 많습니다. 저장 폴더를 확인하세요.');
 }
