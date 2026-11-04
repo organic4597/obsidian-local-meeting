@@ -30,3 +30,12 @@ test('late events from a previous meeting cannot update or acknowledge the activ
  const {p,commands}=setup();p.renderSegments=async()=>{throw new Error('must not run');};p.receive(update,'previous-session');await p.writes;
  assert.equal(p.meeting.segments[0].revision,1);assert.equal(commands.length,0);
 });
+
+test('streaming text and delayed speaker revisions preserve manual corrections and acknowledge latest updates',async()=>{
+ const {p,commands}=setup();Object.assign(p.meeting.segments[0],{text:'직접 고친 대사',textLocked:true,speaker:'person',speakerLocked:true,speakerState:'manual',textState:'provisional'});p.meeting.speakers.person='진행자';p.renderSegments=async()=>{};
+ for(const [revision,textState,speaker] of [[2,'provisional','pending'],[3,'provisional','live_1'],[4,'stable','live_2']] as const){p.receive({type:'segment',session:'session',segment:{...update.segment,revision,textState,speaker}},'session');await p.writes;}
+ assert.equal(p.meeting.segments[0].text,'직접 고친 대사');assert.equal(p.meeting.segments[0].speaker,'person');assert.equal(p.meeting.segments[0].textState,'stable');assert.equal(p.meeting.segments[0].revision,4);assert.equal(commands.length,3);
+});
+test('the independent capture clock is never replaced by an older ASR status snapshot',()=>{
+ const {p}=setup();p.receive({type:'capture_clock',session:'session',samples:32000,rate:16000,wallTimeMs:1000},'session');p.receive({type:'status',pending:0,lag:0,state:'전사',diagnostics:{samples:16000,sampleRate:16000,captureWallTimeMs:500}},'session');assert.equal(p.diagnostics.samples,32000);
+});

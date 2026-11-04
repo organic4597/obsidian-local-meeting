@@ -9,7 +9,7 @@ const pass=(turns:SpeakerRefinement['turns']):SpeakerRefinement=>({type:'speaker
 test('an additional offline cluster cannot inherit the same existing name',()=>{
  const meeting=m([s('a',0,6000),s('b',6000,10000)]),event=pass([{start:0,end:6000,speaker:'offline_1'},{start:6000,end:10000,speaker:'offline_2'}]);
  const before=meeting.segments.map(x=>({...x}));refineSpeakers(meeting,event,7);
- assert.equal(meeting.segments[0]!.speaker,'speaker_1');assert.notEqual(meeting.segments[1]!.speaker,'speaker_1');assert.equal(meeting.segments[1]!.speaker,'unknown');assert.equal(Object.keys(meeting.speakers).length,1);assert.equal(Object.keys(meeting.speakerCandidates??{}).length,1);assert.equal(meeting.speakers.speaker_1,'기존 이름');
+ assert.equal(meeting.segments[0]!.speaker,'speaker_1');assert.notEqual(meeting.segments[1]!.speaker,'speaker_1');assert.match(meeting.segments[1]!.speaker,/^candidate_/);assert.equal(meeting.segments[1]!.speakerState,'unknown');assert.equal(meeting.speakers[meeting.segments[1]!.speaker],'화자 1');assert.equal(Object.keys(meeting.speakers).length,2);assert.equal(Object.keys(meeting.speakerCandidates??{}).length,1);assert.equal(meeting.speakers.speaker_1,'기존 이름');
  meeting.segments.forEach((x,i)=>{assert.equal(x.text,before[i]!.text);assert.equal(x.start,before[i]!.start);assert.equal(x.end,before[i]!.end);assert.equal(x.revision,1);});
  assert.match(meeting.speakerRefinement!.warning,/예상 7명 중 2개/);assert.deepEqual(refineSpeakers(meeting,event,7),[]);
 });
@@ -38,3 +38,5 @@ test('timestamps appear only at paragraph heads and return after a speaker split
  const meeting=m([s('a',0,2000),s('b',2000,4000)]);let doc=transcriptChanges('',meeting,['a','b'],true).text;assert.equal((doc.match(/\(00:/g)||[]).length,1);
  meeting.segments[1]!.speaker='speaker_2';doc=transcriptChanges(doc,meeting,['b'],true,'speaker').text;assert.equal((doc.match(/\(00:/g)||[]).length,2);assert.match(doc,/\n\n\(00:00:02\) 화자 2:/);
 });
+
+test('offline refinement drops unused provisional identities while protecting manually named live utterances',()=>{const meeting=m([{...s('a',0,3000,'live_1'),speakerLocked:true},s('b',3000,6000,'live_2')]);meeting.speakers={live_1:'김',live_2:'잠정 화자 2'};refineSpeakers(meeting,pass([{start:0,end:3000,speaker:'community_00'},{start:3000,end:6000,speaker:'community_01'}]));assert.equal(meeting.segments[0]!.speaker,'live_1');assert.equal(meeting.speakers.live_1,'김');assert.equal(meeting.speakers.live_2,undefined);});

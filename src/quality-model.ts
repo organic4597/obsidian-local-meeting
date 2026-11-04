@@ -1,6 +1,6 @@
 import {Meeting,Segment} from './model';
 
-export function needsReview(s:Segment){return (s.reviewedRevision??-1)<(s.revision??0)&&!!(s.reviewReasons?.length||s.speaker==='unknown'||s.speaker==='overlap'||s.suggestions?.some(c=>c.state==='suggested'));}
+export function needsReview(s:Segment){return (s.reviewedRevision??-1)<(s.revision??0)&&!!(s.retranscription?.state==='candidate'&&s.retranscription.text!==s.text||s.reviewReasons?.length||s.speaker==='unknown'||s.speaker==='overlap'||s.suggestions?.some(c=>c.state==='suggested'));}
 
 export function acceptRevision(meeting:Meeting,incoming:Segment):{segment:Segment;mode:'normal'|'speaker'}|null {
  const previous=meeting.segments.find(s=>s.id===incoming.id);
@@ -8,8 +8,13 @@ export function acceptRevision(meeting:Meeting,incoming:Segment):{segment:Segmen
  const anchor=meeting.anchors?.[incoming.id];
  const segment:Segment={...incoming};
  if(previous){
-  segment.userRevision=previous.userRevision;segment.history=previous.history;segment.reviewedRevision=previous.reviewedRevision;
-  if(previous.textLocked||anchor?.locked||anchor?.deleted){segment.text=previous.text;segment.textLocked=true;segment.suggestions=previous.suggestions;}
+  segment.suspect=previous.suspect;segment.retranscription=previous.retranscription??segment.retranscription;segment.userRevision=previous.userRevision;segment.history=previous.history;segment.reviewedRevision=previous.reviewedRevision;
+  if(previous.textLocked||anchor?.locked||anchor?.deleted){
+   segment.text=previous.text;segment.textLocked=true;segment.suggestions=previous.suggestions;
+   // Legacy provisional corrections: append only an exact, demonstrable new suffix.
+   if(previous.textState==='provisional'&&previous.rawText&&incoming.rawText?.startsWith(previous.rawText)){segment.text+=incoming.rawText.slice(previous.rawText.length);}
+   else if(previous.textState==='provisional'&&incoming.text!==previous.text){segment.retranscription={text:incoming.text,sourceText:previous.text,start:incoming.start,end:incoming.end,reason:'진행 중 교정과 후속 전사 충돌',state:'candidate'};segment.reviewReasons=[...(segment.reviewReasons??[]),'교정 후 이어진 전사 확인 필요'];}
+  }
   if(previous.speakerLocked||(incoming.revision===undefined&&incoming.speaker==='unknown'&&previous.speaker!=='unknown')){
    segment.speaker=previous.speaker;segment.speakerLocked=true;segment.speakerState='manual';
   }
@@ -20,10 +25,13 @@ export function acceptRevision(meeting:Meeting,incoming:Segment):{segment:Segmen
 export function reviewEdit(s:Segment,expectedRevision:number,expectedText:string,text:string,speaker:string){
  if((s.revision??0)!==expectedRevision||s.text!==expectedText)throw new Error('발언이 변경되었습니다. 최신 내용을 다시 확인해 주세요.');
  if(!text.trim()||text.length>10000||/[\r\n]/.test(text))throw new Error('발언은 1~10,000자의 한 문단으로 입력해 주세요.');
- const before={text:s.text,speaker:s.speaker,textLocked:s.textLocked,speakerLocked:s.speakerLocked,speakerState:s.speakerState,suggestions:structuredClone(s.suggestions),reviewedRevision:s.reviewedRevision};
+ if(s.textState==='provisional'&&text!==s.text)throw new Error('진행 중인 발언은 화자만 수정할 수 있습니다. 말이 끝난 뒤 대사를 교정하세요.');
+ const changedText=text!==s.text;
+ const before={retranscription:structuredClone(s.retranscription),text:s.text,speaker:s.speaker,textLocked:s.textLocked,speakerLocked:s.speakerLocked,speakerState:s.speakerState,suggestions:structuredClone(s.suggestions),reviewedRevision:s.reviewedRevision};
  const userRevision=(s.userRevision??0)+1;
  s.history=[...(s.history??[]),{at:new Date().toISOString(),before,afterText:text,afterSpeaker:speaker,userRevision}];
- s.text=text;s.speaker=speaker;s.textLocked=true;s.speakerLocked=true;s.speakerState='manual';s.userRevision=userRevision;s.reviewedRevision=s.revision??0;
+ if(changedText&&s.retranscription)s.retranscription={...s.retranscription,state:'applied'};
+ s.text=text;s.speaker=speaker;s.textLocked=s.textLocked||changedText;s.speakerLocked=true;s.speakerState='manual';s.userRevision=userRevision;s.reviewedRevision=s.revision??0;
  s.suggestions=s.suggestions?.map(c=>({...c,state:'dismissed'}));
 }
 

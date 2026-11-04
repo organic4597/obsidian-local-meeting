@@ -22,7 +22,8 @@ function align(weights:number[][]){
  const pairs:[number,number][]=[];for(let j=1;j<=n;j++)if(p[j]<=rows&&j<=cols&&(weights[p[j]-1]?.[j-1]??0)>0)pairs.push([p[j]-1,j-1]);return pairs;
 }
 export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0){
- if(meeting.speakerPassId===pass.passId)return [];
+ if((meeting.refinementApplicationId??meeting.speakerPassId)===(pass.applicationId??pass.passId))return [];
+ delete meeting.voiceAutoAssignments;
  const clusters=[...new Set(pass.turns.map(t=>t.speaker))].sort(),old=[...new Set(meeting.segments.map(s=>s.speaker).filter(id=>known(id)&&!isUnconfirmedSpeaker(meeting,id)))].sort((a,b)=>meeting.segments.filter(s=>s.speaker===b).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)-meeting.segments.filter(s=>s.speaker===a).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)).slice(0,32);
  const spans=new Map(meeting.segments.map(s=>[s.id,evidence(pass.turns,s.start,s.end)]));
  // A user-assigned speaker is a strong anchor, but an edited paragraph is kept intact below.
@@ -33,32 +34,36 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
   const row=weights[i]!,total=row.reduce((a,b)=>a+b,0);
   if(total&&row[j]!/total>=.65)mapping.set(clusters[i]!,old[j]!);
  }
+ // A later word-alignment attempt on the same audio pass keeps the cluster identities.
+ if(meeting.speakerPassId===pass.passId)for(const c of clusters){const prior=meeting.speakerClusters?.[c];if(prior&&!mapping.has(c)&&!Array.from(mapping.values()).includes(prior)&&prior in meeting.speakers)mapping.set(c,prior);}
  const hasPeople=Object.keys(meeting.speakers).some(id=>!isUnconfirmedSpeaker(meeting,id));
  for(const c of clusters)if(!mapping.has(c)){
   // A split cluster must get its own slot instead of inheriting the same old name twice.
   const id=hasPeople?`candidate_${pass.passId.slice(0,16)}_${c}`:`auto_${c}`;mapping.set(c,id);
-  if(hasPeople){meeting.speakerCandidates??={};meeting.speakerCandidates[id]={label:`미확정 음성 그룹 ${clusters.indexOf(c)+1}`,passId:pass.passId};}
+  if(hasPeople){meeting.speakerCandidates??={};const used=new Set(Object.values(meeting.speakers));let number=1;while(used.has(`화자 ${number}`))number++;const label=`화자 ${number}`;meeting.speakerCandidates[id]={label,passId:pass.passId};meeting.speakers[id]=label;}
   else meeting.speakers[id]??=`화자 ${clusters.indexOf(c)+1}`;
  }
+ meeting.speakerClusters=Object.fromEntries(mapping);meeting.speakerClusterConflicts=[...conflicts];
  const changed:string[]=[];
  for(const s of meeting.segments){
   const anchor=meeting.anchors?.[s.id];
   if(s.speakerLocked||anchor?.locked&&anchor.speakerShown!==false||anchor?.deleted)continue;
   const e=spans.get(s.id)!,best=[...e.single].sort((a,b)=>b[1]-a[1])[0];
   const match=best?mapping.get(best[0]):undefined;
-  const speaker=e.overlap>=200?'overlap':best&&!conflicts.has(best[0])&&best[1]/Math.max(1,e.speech)>=.85?match?.startsWith('candidate_')?'unknown':match!:'unknown';
-  const reasons=(s.reviewReasons??[]).filter(x=>!['화자 활동 근거 부족','화자 전환 경계 확인 필요','동시 활성 발언 확인 필요'].includes(x));
+  const speaker=e.overlap>=200?'overlap':best&&!conflicts.has(best[0])&&best[1]/Math.max(1,e.speech)>=.85?match!:'unknown';
+  const reasons=(s.reviewReasons??[]).filter(x=>!['실시간 잠정 화자 · 종료 후 재분석','화자 활동 근거 부족','화자 전환 경계 확인 필요','동시 활성 발언 확인 필요'].includes(x));
   if(speaker==='unknown')reasons.push('종료 후 화자 경계 확인 필요');
   if(speaker==='overlap')reasons.push('종료 후 동시 발언 확인 필요');
   if(match?.startsWith('candidate_'))reasons.push('미확정 음성 그룹 연결 가능');
   if(best&&conflicts.has(best[0]))reasons.push('사용자 지정 화자가 하나로 합쳐진 구간 확인 필요');
   if(s.speaker!==speaker)s.reviewedRevision=undefined;
-  s.speaker=speaker;s.speakerState=speaker==='overlap'?'overlap':speaker==='unknown'?'unknown':'single';
+  s.speaker=speaker;s.speakerState=speaker==='overlap'?'overlap':speaker==='unknown'||speaker.startsWith('candidate_')?'unknown':'single';
   s.reviewReasons=[...new Set(reasons)];s.candidates=[...e.single].sort((a,b)=>b[1]-a[1]).map(([c,ms])=>({speaker:mapping.get(c)!,activity:ms/Math.max(1,e.speech),activeSeconds:ms/1000}));
   // No text, timings, segment IDs, revisions, edits, or review history are rewritten.
   changed.push(s.id);
  }
+ for(const id of Object.keys(meeting.speakers))if(id.startsWith('live_')&&isUnconfirmedSpeaker(meeting,id)&&!meeting.segments.some(s=>s.speaker===id))delete meeting.speakers[id];
  const warning=expected>pass.detectedSpeakers?`예상 ${expected}명 중 ${pass.detectedSpeakers}개 화자만 검출했습니다. 서로 다른 사람이 합쳐졌을 수 있습니다. 원음을 확인해 새 참여자로 직접 지정하세요.`:'';
- meeting.transcriptMode='dialogue';meeting.speakerPassId=pass.passId;meeting.speakerRefinement={detected:pass.detectedSpeakers,expected,warning,processingSeconds:pass.processingSeconds};
+ meeting.transcriptMode='dialogue';meeting.refinementApplicationId=pass.applicationId??pass.passId;meeting.speakerPassId=pass.passId;meeting.speakerRefinement={detected:pass.detectedSpeakers,expected,warning,processingSeconds:pass.processingSeconds};
  return changed;
 }

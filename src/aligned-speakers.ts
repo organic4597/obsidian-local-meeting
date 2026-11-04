@@ -1,16 +1,17 @@
 import {Meeting,SpeakerRefinement,Segment} from './model';
 /** Split only untouched text at measured word boundaries; typed text remains one protected block. */
 export function splitAlignedSpeakers(meeting:Meeting,pass:SpeakerRefinement,doc:string){
- if(meeting.transcriptMode!=='text-only'||!pass.alignments)return;
+ if(!pass.alignments)return;
  const next:Segment[]=[];
  for(const s of meeting.segments){
   const anchor=meeting.anchors?.[s.id],a=pass.alignments[s.id];
   if(!anchor||anchor.locked||anchor.deleted||s.textLocked||s.speakerLocked||!a?.words.length||a.text!==s.text||doc.slice(anchor.from,anchor.to)!==meeting.rendered[s.id]){next.push(s);continue;}
-  const prefix=(meeting.rendered[s.id]??'').match(/^\(\d\d:\d\d:\d\d\) /)?.[0]??'';
+  const rendered=meeting.rendered[s.id]??'';const prefix=rendered.endsWith(s.text)?rendered.slice(0,rendered.length-s.text.length):'';
   if(doc.slice(anchor.from+prefix.length,anchor.to)!==s.text||a.words.some((w,i)=>i>0&&(w.from<a.words[i-1]!.to||w.start<a.words[i-1]!.start))){next.push(s);continue;}
   const groups:{speaker:string;from:number;start:number;end:number}[]=[];
   for(const w of a.words){const midpoint=(w.start+w.end)/2,ids=[...new Set(pass.turns.filter(t=>t.start<=midpoint&&t.end>midpoint).map(t=>t.speaker))],speaker=ids.length===1?ids[0]!:'unknown',last=groups.at(-1);
    if(last&&last.speaker===speaker)last.end=w.end;else groups.push({speaker,from:w.from,start:w.start,end:w.end});}
+  if(groups.some((g,i)=>i>0&&meeting.segments.some(other=>other.id===`${s.id}_w${i}`))){next.push(s);continue;}
   if(groups.length<2){next.push(s);continue;}
   meeting.originalSegments??={};meeting.originalSegments[s.id]??=structuredClone(s);
   const original={...anchor};

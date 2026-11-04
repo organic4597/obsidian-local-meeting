@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {requestSummary,responseText,summaryInput,summaryMarkdown,validateSummary,chooseSummaryPath} from '../src/ai-summary';
+import {requestSummary,responseText,summaryInput,summaryMarkdown,validateSummary,chooseSummaryPath,validateSpeakerEvidence} from '../src/ai-summary';
 import {Meeting} from '../src/model';
 const value={summary:'검토를 진행했습니다.',decisions:[{description:'수정본 검토',evidence:['a']}],tasks:[{title:'자료 확인',assignee:null,due:null,evidence:['note']}],events:[{title:'다음 회의',start:null,end:null,whenText:'다음 주',evidence:['a']}],openQuestions:[],terms:[]};
 const meeting:Meeting={id:'m',note:'meeting.md',directory:'/tmp/m',started:'2026-10-28T00:00:00Z',speakers:{},segments:[{id:'a',start:0,end:5000,text:'과거 ASR 텍스트',speaker:'speaker_1'}],rendered:{}};
@@ -15,3 +15,11 @@ test('generated text cannot render third-party images or raw HTML in summary not
 test('evidence excerpts come from the current editor rather than stale ASR fields',()=>{const m=structuredClone(meeting);m.anchors={a:{from:0,to:9,locked:true}};const input=summaryInput(m,'사용자 수정 대사와 별도 메모');assert.equal(input.sources[0]!.text,'사용자 수정 대사');assert.ok(!JSON.stringify(input).includes('과거 ASR 텍스트'));});
 
 test('new summaries allocate a fresh readable note while matching cached summaries preserve edited notes',()=>{const base='회의 - 회의 정리.md',prior={sourceHash:'old',model:'model',note:base,created:'now',stale:false};assert.equal(chooseSummaryPath(base,prior,'new','model',p=>p===base),'회의 - 회의 정리 2.md');assert.equal(chooseSummaryPath(base,prior,'old','model',p=>p===base),base);assert.equal(chooseSummaryPath(base,prior,'old','other-model',p=>p===base),'회의 - 회의 정리 2.md');});
+
+ test('person summaries reject evidence from another person and retain playback links',()=>{
+ const input={sourceHash:'h',started:'2026-11-03T00:00:00Z',document:'수정한 발언',sources:[{id:'a',start:0,end:5000,speaker:'민수',speakerId:'s1'},{id:'b',start:9000,end:12000,speaker:'지영',speakerId:'s2'}]};
+ const good={...value,speakerSummaries:[{speakerId:'s1',points:[{description:'검토를 제안함',evidence:['a']}]}]};validateSpeakerEvidence(good,input);
+ const md=summaryMarkdown({sourceHash:'h',created:'now',model:'test',value:good},input,'meeting.md');assert.match(md,/인물별 발언 요약/);assert.match(md,/### 민수/);assert.match(md,/local-meeting:\/\/audio/);
+ assert.throws(()=>validateSpeakerEvidence({...good,speakerSummaries:[{speakerId:'s1',points:[{description:'다른 사람 의견',evidence:['b']}]}]},input),/일치/);
+ assert.throws(()=>validateSummary({...value,speakerSummaries:[{speakerId:'s1',points:[]}]},new Set(['a'])),/인물별/);
+ });

@@ -1,0 +1,7 @@
+{"probe":"partial_correction","displayed":"사용자 교정","rawEnd":5000,"finalState":"stable"}
+{"probe":"external_note_edit","document":"추가 내용\n메모","linkedText":"추가"}
+{"probe":"storage_path","originalDirectory":"/old/session","playbackAfterSettingChange":"/new-storage/12345678-1234-1234-1234-123456789abc/recording.wav"}
+{"probe":"preview_cost","segments":100,"ms":[3.5,2.1,1.2,1]}
+{"probe":"preview_cost","segments":1000,"ms":[93.3,91.2,88,89]}
+{"probe":"preview_cost","segments":3000,"ms":[841.6,822.9,824.6,823.2]}
+{"probe":"stale_review_reason","speaker":"auto_community_00","speakerState":"single","reasons":["실시간 잠정 화자 · 종료 후 재분석"],"needsReview":true}

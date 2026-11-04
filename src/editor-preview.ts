@@ -8,7 +8,7 @@ class PreviewWidget extends WidgetType {
  private update(root:HTMLElement){
   root.className='lm-transcript-preview'+(this.frame.final?' is-final':'')+(this.frame.typing?' is-typing':'');
   root.querySelector('.lm-preview-label')!.textContent=this.frame.final?'확정 기록 작성 중':'임시 전사 · 자동 저장됨';
-  root.querySelector('.lm-preview-text')!.textContent=this.frame.text||'발언이 끝나면 전사가 여기에 나타납니다.';
+  root.querySelector('.lm-preview-text')!.textContent=this.frame.text||'말씀하시면 임시 전사가 여기에 나타납니다.';
  }
  toDOM(){const root=document.createElement('div');root.contentEditable='false';root.setAttribute('aria-label','회의 전사 미리보기');
   const label=root.appendChild(document.createElement('div'));label.className='lm-preview-label';

@@ -1,0 +1,6 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {audioHref,hrefRanges,hoverRecordingRanges,contentLinks} from '../src/summary-content';
+test('edited summary text and task state survive conversion, ranges stay disjoint and idempotent',()=>{const original='- [x] 직접 고친 내용  \n  구간 녹음: 01:10–01:20  \n  구간 녹음: 03:00–03:20\n- 근거 없는 내용';const next=hoverRecordingRanges(original),links=contentLinks(next);assert.equal(links.length,1);assert.equal(links[0]!.text,'직접 고친 내용');assert.deepEqual(links[0]!.ranges.map(r=>[r.start,r.end]),[[70000,80000],[180000,200000]]);assert.match(next,/^- \[x\]/);assert.doesNotMatch(next,/구간 녹음:/);assert.equal(hoverRecordingRanges(next),next);});
+test('playback links reject arbitrary destinations and invalid ranges, keep fenced examples',()=>{assert.deepEqual(hrefRanges('https://example.test/audio?ranges=00:01–00:02'),[]);assert.deepEqual(hrefRanges(audioHref('10:00–09:00')),[]);assert.equal(contentLinks('```\n[문장]('+audioHref('00:01–00:02')+')\n```').length,0);const text='- 예시\n```\n- 예시 · 00:01–00:02\n```';assert.equal(hoverRecordingRanges(text),text);});
+test('escaped brackets remain readable without changing link targets',()=>{const text='- [확인한 \\[표기\\]]('+audioHref('00:01–00:02')+')';assert.equal(contentLinks(text)[0]!.text,'확인한 [표기]');});

@@ -9,6 +9,11 @@ import {audioRange} from './audio-review';
 export interface QualityHost {
  meeting?:Meeting;bridge?:unknown;diagnostics:Record<string,unknown>;
  settings:{dictionaryEnabled:boolean;dictionaryProject:string};
+ openCorrectionCandidates():Promise<void>;
+ openRetranscriptionCandidates():Promise<void>;
+ markSuspect(id:string):Promise<void>;
+ retranscribeSegment(id:string):Promise<void>;
+ recordingFile():Promise<string>;
  dictionary():LocalDictionary;
  dictionaryChanged():Promise<void>;
  exportDictionary(format:'json'|'csv'):Promise<void>;
@@ -44,6 +49,7 @@ export class DictionaryModal extends Modal {
   for(const p of data.projects)project.createEl('option',{text:p.name,value:p.id});project.value=this.host.settings.dictionaryProject;
   project.addEventListener('change',()=>{this.host.settings.dictionaryProject=project.value;void this.host.dictionaryChanged().then(()=>this.load()).catch(e=>new Notice(String(e)));});
   const actions=root.createDiv({cls:'lm-quality-toolbar'});
+  button(actions,'반복 오인식 후보',()=>this.host.openCorrectionCandidates());
   button(actions,'용어 추가',()=>new TermModal(this.app,this.host,data,undefined,()=>this.load()).open(),'mod-cta');
   const name=actions.createEl('input',{type:'text',attr:{placeholder:'새 프로젝트 이름','aria-label':'새 프로젝트 이름',maxlength:'80'}});
   button(actions,'프로젝트 추가',async()=>{await this.host.dictionary().request({type:'project',name:name.value});await this.load();});
@@ -79,12 +85,12 @@ class ImportModal extends Modal {
  onOpen(){this.setTitle('사전 가져오기 확인');this.contentEl.createEl('p',{text:`현재 Vault에 ${this.preview.accepted}개를 추가합니다. 기존 용어 ${this.preview.skipped.length}개는 유지합니다.`});this.contentEl.createEl('p',{text:this.preview.preview.slice(0,30).map(t=>t.canonical).join(', '),cls:'lm-hint'});button(this.contentEl,'추가',async()=>{await this.apply();this.close();},'mod-cta');button(this.contentEl,'취소',()=>this.close());}
 }
 export class TermModal extends Modal {
- constructor(app:App,private host:QualityHost,private data:DictionaryData,private term?:Term,private changed?:()=>Promise<void>,private selection=''){super(app);}
+ constructor(app:App,private host:QualityHost,private data:DictionaryData,private term?:Term,private changed?:()=>Promise<void>,private selection='',private seed?:{canonical:string;observedErrors:string[]}){super(app);}
  onOpen(){
   this.setTitle(this.term?'용어 수정':'용어 추가');this.modalEl.addClass('lm-editor-modal');const root=this.contentEl,t=this.term;
-  const canonical=field(root,'표준 표기').createEl('input',{type:'text',value:t?.canonical??'',attr:{maxlength:'80',placeholder:'예: OpenSearch'}});
+  const canonical=field(root,'표준 표기').createEl('input',{type:'text',value:t?.canonical??this.seed?.canonical??'',attr:{maxlength:'80',placeholder:'예: OpenSearch'}});
   const aliases=field(root,'발음과 별칭 · 쉼표로 구분').createEl('input',{type:'text',value:t?.pronunciations.join(', ')??''});
-  const errors=field(root,'확인한 오인식 · 쉼표로 구분').createEl('input',{type:'text',value:t?.observedErrors.join(', ')??this.selection});
+  const errors=field(root,'확인한 오인식 · 쉼표로 구분').createEl('input',{type:'text',value:t?.observedErrors.join(', ')??this.seed?.observedErrors.join(', ')??this.selection});
   const category=field(root,'종류').createEl('select');for(const [value,text] of Object.entries({technical:'기술 용어',organization:'기관',product:'제품',person:'인명',abbreviation:'약어',other:'기타'}))category.createEl('option',{value,text});category.value=t?.category??'technical';
   const scope=field(root,'적용 범위').createEl('select');for(const [value,text] of Object.entries(scopes)){const o=scope.createEl('option',{value,text});o.disabled=(value==='meeting'&&!this.host.meeting)||(value==='project'&&!this.host.settings.dictionaryProject);}scope.value=t?.scope.kind??'vault';
   const policy=field(root,'적용 방법').createEl('select');for(const [value,text] of Object.entries(policies))policy.createEl('option',{value,text});policy.value=t?.postprocess??'hint';
@@ -114,17 +120,17 @@ export class ReviewModal extends Modal {
  private render(){
   const root=this.contentEl;root.empty();const m=this.host.meeting;if(!m){root.createEl('p',{text:'불러온 회의가 없습니다.'});return;}
   const tools=root.createDiv({cls:'lm-quality-toolbar'});const filter=field(tools,'표시 범위').createEl('select');
-  for(const [value,text] of Object.entries({grouped:'종류별 모아보기',pending:'미확인 발언 펼쳐보기',speaker:'화자 미확정과 동시 발언',terms:'용어 교정 후보',all:'모든 발언'}))filter.createEl('option',{value,text});filter.value=this.filter;
-  filter.addEventListener('change',()=>{this.filter=filter.value;this.limit=30;this.render();});button(tools,'새로고침',()=>this.render());
+  for(const [value,text] of Object.entries({grouped:'종류별 모아보기',pending:'미확인 발언 펼쳐보기',speaker:'화자 미확정과 동시 발언',terms:'용어 교정 후보',retranscription:'재전사 후보 발언',all:'모든 발언'}))filter.createEl('option',{value,text});filter.value=this.filter;
+  filter.addEventListener('change',()=>{this.filter=filter.value;this.limit=30;this.render();});button(tools,'새로고침',()=>this.render());button(tools,'재전사 후보',()=>this.host.openRetranscriptionCandidates());button(tools,'반복 오인식 후보',()=>this.host.openCorrectionCandidates());
   const advanced=root.createEl('details');advanced.createEl('summary',{text:'진단 · 평가 도구'});button(advanced,'진단 내보내기',()=>this.host.exportDiagnostics());button(advanced,'평가용 정답 양식',()=>this.host.exportEvaluation());
   if(this.filter==='grouped'){
    root.createEl('p',{text:'검토는 선택 사항입니다. 반복된 항목은 묶어 두었으며 녹음이나 정리를 막지 않습니다.',cls:'lm-hint'});
-   for(const c of candidateGroups(m)){const box=root.createEl('details',{cls:'lm-review-group'});box.createEl('summary',{text:`참여자 연결 · ${c.segments.length}개 발언`});box.createEl('p',{text:'같은 사람으로 보이는 음성 그룹입니다. 기존 참여자와 연결하거나 이름을 입력해 추가하세요.',cls:'lm-hint'});const select=box.createEl('select',{attr:{'aria-label':'연결할 참여자'}});select.createEl('option',{value:'',text:'참여자 선택'});for(const id of participantIds(m))select.createEl('option',{value:id,text:speakerName({...c.segments[0]!,speaker:id},m.speakers)});const input=field(box,'새 참여자 이름 (선택)').createEl('input',{type:'text',attr:{maxlength:'60'}});button(box,'참여자 연결',async()=>{await this.host.connectCandidate(c.id,input.value.trim()?'name:'+input.value.trim():select.value);this.render();});}
+   for(const c of candidateGroups(m)){const box=root.createEl('details',{cls:'lm-review-group'});box.createEl('summary',{text:`${c.label} · 참여자 연결 · ${c.segments.length}개 발언`});box.createEl('p',{text:'같은 사람으로 보이는 음성 그룹입니다. 기존 참여자와 연결하거나 이름을 입력해 추가하세요.',cls:'lm-hint'});const select=box.createEl('select',{attr:{'aria-label':'연결할 참여자'}});select.createEl('option',{value:'',text:'참여자 선택'});for(const id of participantIds(m).filter(id=>id!==c.id))select.createEl('option',{value:id,text:speakerName({...c.segments[0]!,speaker:id},m.speakers)});const input=field(box,'새 참여자 이름 (선택)').createEl('input',{type:'text',attr:{maxlength:'60'}});button(box,'참여자 연결',async()=>{await this.host.connectCandidate(c.id,input.value.trim()?'name:'+input.value.trim():select.value);this.render();});}
    const groups=reviewGroups(m);if(!groups.length)root.createEl('p',{text:'추가로 확인할 항목이 없습니다.',cls:'lm-empty'});
    for(const g of groups){if(g.key.startsWith('candidate:'))continue;const box=root.createEl('details',{cls:'lm-review-group'});box.createEl('summary',{text:`${g.label} · ${g.segments.length}개 발언`});for(const s of g.segments.slice(0,this.limit)){const row=box.createDiv({cls:'lm-review-row'});row.createEl('p',{text:`${timestamp(s.start)} · ${s.text.slice(0,160)}`});button(row,'듣고 수정',()=>new ReviewDetail(this.app,this.host,structuredClone(s),()=>this.render()).open());}if(g.segments.length>this.limit)button(box,'더 보기',()=>{this.limit+=30;this.render();});}
    return;
   }
-  const segments=m.segments.filter(s=>this.filter==='all'||this.filter==='speaker'&&['unknown','overlap'].includes(s.speaker)||this.filter==='terms'&&s.suggestions?.some(c=>c.state==='suggested')||this.filter==='pending'&&needsReview(s));
+  const segments=m.segments.filter(s=>this.filter==='all'||this.filter==='retranscription'&&!!s.retranscription||this.filter==='speaker'&&(['unknown','overlap'].includes(s.speaker)||s.speakerState==='unknown')||this.filter==='terms'&&s.suggestions?.some(c=>c.state==='suggested')||this.filter==='pending'&&needsReview(s));
   root.createEl('p',{text:`${segments.length}개 발언 · 원음과 비교해 확인하세요. 직접 수정한 본문은 자동 교정하지 않습니다.`,cls:'lm-hint'});
   const list=root.createDiv({cls:'lm-quality-list'});
   for(const s of segments.slice(0,this.limit)){
@@ -146,12 +152,13 @@ class ReviewDetail extends Modal {
   button(player,'이 구간 원음 재생',async()=>{
    if(this.host.bridge&&!headphones.checked)throw new Error('스피커 소리가 다시 녹음될 수 있습니다. 녹음을 마치거나 헤드폰을 확인해 주세요.');
    this.audio?.pause();if(this.url)URL.revokeObjectURL(this.url);
-   const pcm=await audioRange(join(m.directory,'recording.wav'),s.start,s.end);this.url=URL.createObjectURL(new Blob([pcm as BlobPart],{type:'audio/wav'}));
+   const pcm=await audioRange(await this.host.recordingFile(),s.start,s.end);this.url=URL.createObjectURL(new Blob([pcm as BlobPart],{type:'audio/wav'}));
    this.audio??=player.createEl('audio',{attr:{controls:'true','aria-label':'발언 원음'}});this.audio.src=this.url;await this.audio.play();
   });
   if(s.rawText)root.createEl('p',{text:'인식 원문: '+s.rawText,cls:'lm-raw-transcript'});
   const text=field(root,'노트에 적용할 대사').createEl('textarea',{text:s.text,attr:{rows:'5',maxlength:'10000'}});
   if(s.rawText&&s.rawText!==s.text)button(root,'인식 원문으로 바꾸기',()=>{text.value=s.rawText!;});
+  if(s.textState==='provisional'){text.readOnly=true;root.createEl('p',{text:'대사는 말이 끝난 뒤 교정할 수 있습니다. 지금은 화자를 지정할 수 있습니다.',cls:'lm-hint'});}
   const speaker=field(root,'화자').createEl('select');const ids=[...new Set(['unknown','overlap',...m.segments.map(x=>x.speaker),...Object.keys(m.speakers)])];
   for(const id of ids)speaker.createEl('option',{value:id,text:speakerName({...s,speaker:id},m.speakers)});speaker.value=s.speaker;
   if(s.candidates?.length)root.createEl('p',{text:'활동 근거: '+s.candidates.map(c=>`${speakerName({...s,speaker:c.speaker},m.speakers)} ${(c.activity*100).toFixed(0)}% / ${c.activeSeconds.toFixed(1)}초`).join(' · ')+' · 신원 정확도 수치가 아닙니다.',cls:'lm-hint'});
@@ -159,6 +166,9 @@ class ReviewDetail extends Modal {
    if(c.state==='suggested')button(root,`${c.before} → ${c.after} 제안 넣기`,()=>{if(text.value!==s.text||text.value.slice(c.start,c.end)!==c.before)throw new Error('수정된 대사를 확인한 뒤 직접 교정해 주세요.');text.value=text.value.slice(0,c.start)+c.after+text.value.slice(c.end);});
    else if(c.state==='applied')root.createEl('p',{text:`표기 통일: ${c.before} → ${c.after} · 원문은 위에 보존됩니다.`,cls:'lm-hint'});
   }
+  if(this.host.bridge)button(root,s.suspect?'의심 구간 표시됨':'종료 후 재전사할 의심 구간으로 표시',()=>this.host.markSuspect(s.id));
+  else button(root,'이 구간 다시 전사',async()=>{await this.host.retranscribeSegment(s.id);const latest=this.host.meeting?.segments.find(x=>x.id===s.id);if(latest){this.close();new ReviewDetail(this.app,this.host,structuredClone(latest),this.changed).open();}});
+  if(s.retranscription){const c=s.retranscription;root.createEl('p',{text:'동일 구간 재전사 후보: '+c.text});if(c.contextText)root.createEl('p',{text:'전후 발언을 포함한 참고 후보: '+c.contextText,cls:'lm-hint'});if(s.textState!=='provisional'&&c.start===s.start&&c.end===s.end)button(root,'재전사 후보를 편집기에 넣기',()=>{text.value=c.text;});root.createEl('p',{text:'후보는 자동 적용되지 않습니다. 대사와 화자를 확인한 뒤 교정 적용을 누르세요.',cls:'lm-hint'});}
   const error=root.createDiv({cls:'lm-form-error',attr:{role:'alert'}}),actions=root.createDiv({cls:'lm-form-actions'});
   button(actions,'교정 적용',async()=>{try{await this.host.reviewApply(s.id,s.revision??0,s.text,text.value,speaker.value);this.changed();this.close();}catch(e){error.setText(String(e));}},'mod-cta');
   button(actions,'현재 내용 유지하고 확인 완료',async()=>{try{await this.host.reviewKeep(s.id,s.revision??0);this.changed();this.close();}catch(e){error.setText(String(e));}});

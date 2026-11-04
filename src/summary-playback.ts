@@ -11,6 +11,7 @@ export class SummaryAudioIndex {
  private entries:Record<string,string>={};private writes:Promise<void>=Promise.resolve();
  constructor(private path:string|undefined,private changed:()=>void=()=>{}){}
  async load(){if(!this.path)return;try{const data=JSON.parse(await readFile(this.path,'utf8'));if(data&&typeof data==='object'&&!Array.isArray(data))for(const [note,id] of Object.entries(data))if(note.endsWith('.md')&&validSession(id))this.entries[note]=id;}catch{}}
+ rename(old:string,next:string){const updated:Record<string,string>={};for(const [path,id] of Object.entries(this.entries))updated[path===old?next:path.startsWith(old+'/')?next+path.slice(old.length):path]=id;this.entries={};for(const [path,id] of Object.entries(updated))this.register(path,id);}
  session(note:string){return this.entries[note];}
  register(note:string|undefined,session:string){if(!note?.endsWith('.md')||!validSession(session)||this.entries[note]===session)return;this.entries[note]=session;this.changed();const snapshot=JSON.stringify(this.entries,null,2),path=this.path;if(path)this.writes=this.writes.catch(()=>{}).then(async()=>{await mkdir(dirname(path),{recursive:true});await writeFile(path+'.tmp',snapshot,{mode:0o600});await rename(path+'.tmp',path);});void this.writes.catch(()=>{});}
  async flush(){await this.writes;}

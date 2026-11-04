@@ -1,20 +1,24 @@
-import {Meeting,SpeakerRefinement} from './model';
+import {Meeting,SpeakerRefinement,segmentText} from './model';
 import {transcriptChanges} from './editor-changes';
 import {splitAlignedSpeakers} from './aligned-speakers';
 import {refineSpeakers} from './speaker-refinement';
 
 /** Preview text never becomes a Markdown edit until explicitly committed. */
 export function previewText(meeting:Meeting,showTime=false){
- const copy=structuredClone(meeting);copy.rendered={};copy.anchors={};copy.noteSnapshot='';
- return transcriptChanges('',copy,copy.segments.map(s=>s.id),showTime).text.trimEnd();
+ const speaker=meeting.transcriptMode!=='text-only'||meeting.segments.some(s=>s.speakerLocked||s.speaker.startsWith('live_')||s.speaker==='overlap');
+ const parts:string[]=[];let previous:Meeting['segments'][number]|undefined;
+ for(const s of meeting.segments){const inline=previous&&previous.speaker===s.speaker&&(!speaker||s.speaker!=='unknown'&&s.speaker!=='overlap')&&s.start>=previous.start&&s.start-previous.end<(meeting.paragraphPauseMs??2500);
+  parts.push(previous?(inline?' ':'\n\n'):'',segmentText(s,meeting.speakers,inline?false:showTime,inline?false:speaker));previous=s;
+ }
+ return parts.join('').trimEnd();
 }
 /** Align against a virtual transcript, without borrowing positions from the user's notes. */
 export function refinePreview(meeting:Meeting,pass:SpeakerRefinement,expected=0){
  const copy=structuredClone(meeting);copy.rendered={};copy.anchors={};copy.noteSnapshot='';
  const doc=transcriptChanges('',copy,copy.segments.map(s=>s.id)).text;
  splitAlignedSpeakers(copy,pass,doc);refineSpeakers(copy,pass,expected);
- meeting.segments=copy.segments;meeting.speakers=copy.speakers;meeting.speakerCandidates=copy.speakerCandidates;meeting.originalSegments=copy.originalSegments;
- meeting.speakerPassId=copy.speakerPassId;meeting.speakerRefinement=copy.speakerRefinement;meeting.transcriptMode=copy.transcriptMode;
+ meeting.segments=copy.segments;meeting.speakers=copy.speakers;meeting.speakerCandidates=copy.speakerCandidates;meeting.speakerClusters=copy.speakerClusters;meeting.speakerClusterConflicts=copy.speakerClusterConflicts;meeting.voiceAutoAssignments=copy.voiceAutoAssignments;meeting.originalSegments=copy.originalSegments;
+ meeting.refinementApplicationId=copy.refinementApplicationId;meeting.speakerPassId=copy.speakerPassId;meeting.speakerRefinement=copy.speakerRefinement;meeting.transcriptMode=copy.transcriptMode;
  meeting.presentation='committing';
 }
 const segmenter=new Intl.Segmenter('ko',{granularity:'grapheme'});
@@ -25,8 +29,10 @@ export class TextReveal {
  constructor(private final=false){}
  set(text:string,final=this.final){
   if(text===this.target&&final===this.final)return;
-  const next=graphemes(text);let common=0;
+  const next=graphemes(text);let common=0;const prior=this.target;const complete=this.done;
   if(final===this.final)while(common<Math.min(this.shown,next.length)&&this.units[common]===next[common])common++;
+  // Revisions (including later speaker labels) replace the existing preview in place.
+  if(!final&&complete&&prior&&!text.startsWith(prior))common=next.length;
   this.units=next;this.shown=common;this.final=final;this.target=text;this.carry=0;
   this.speed=Math.max(final?65:90,(next.length-common)/(final?8:1.2));
  }
