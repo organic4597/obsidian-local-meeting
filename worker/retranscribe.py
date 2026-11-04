@@ -11,8 +11,8 @@ def reason(s):
     if re.search(r'(.{2,20}?)\1{3,}',text):return '반복 인식 의심'
     return ''
 
-def run(root,session,context='',ids=None,budget=60,limit=8,segments_override=None):
-    root=Path(root);source=json.loads((root/'transcript.json').read_text());segments=source['segments'] if segments_override is None else segments_override;path=root/'retranscription.json'
+def run(root,session,context='',ids=None,budget=60,limit=8,segments_override=None,output_root=None):
+    root=Path(root);source=json.loads((root/'transcript.json').read_text());segments=source['segments'] if segments_override is None else segments_override;out=Path(output_root) if output_root else root;out.mkdir(parents=True,exist_ok=True);path=out/'retranscription.json'
     try:saved=json.loads(path.read_text())
     except FileNotFoundError:saved={'schemaVersion':1,'items':{}}
     if saved.get('schemaVersion')!=1 or not isinstance(saved.get('items'),dict):raise ValueError('재전사 후보 형식을 확인해 주세요.')
@@ -42,7 +42,7 @@ def run(root,session,context='',ids=None,budget=60,limit=8,segments_override=Non
 if __name__=='__main__':
     import argparse,os
     os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1')
-    p=argparse.ArgumentParser();p.add_argument('--session',required=True);p.add_argument('--model',required=True);p.add_argument('--id',required=True);p.add_argument('--request');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--session',required=True);p.add_argument('--model',required=True);p.add_argument('--id',required=True);p.add_argument('--request');p.add_argument('--output-root');a=p.parse_args()
     with contextlib.redirect_stdout(sys.stderr):
         from mlx_qwen3_asr import Session
         from dictionary import context_text
@@ -53,5 +53,5 @@ if __name__=='__main__':
             item=json.loads(request.read_text())
             if item.get('id')!=a.id or not isinstance(item.get('text'),str) or len(item['text'])>10000 or not isinstance(item.get('start'),(int,float)) or not isinstance(item.get('end'),(int,float)) or item['start']<0 or not 0<item['end']-item['start']<=24000:raise ValueError('재전사 요청 범위가 잘못됐습니다.')
             override=[item]
-        result=run(root,session,context_text(config.get('dictionary',{}),session.tokenizer.encode),ids=[a.id],limit=1,segments_override=override)
+        result=run(root,session,context_text(config.get('dictionary',{}),session.tokenizer.encode),ids=[a.id],limit=1,segments_override=override,output_root=a.output_root)
     print(json.dumps(result,ensure_ascii=False))

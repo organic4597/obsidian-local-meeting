@@ -19,8 +19,9 @@ def run(args,emit):
         from recording import ensure_recording
         ensure_recording(root)
     emit({'type':'hello','session':root.name,'protocol':2,'features':['dictionary','revisions','ack','text-only','community-after-stop']})
+    emit({'type':'postprocess_stage','session':root.name,'stage':'asr','inputKey':hashlib.sha256(config_path.read_bytes()).hexdigest(),'status':'running'})
     for s in revisions.all():emit({'type':'segment','session':root.name,'segment':s})
-    saved=revisions.all();done=args.resume and not store.status()['pending'] and saved and all(s.get('textState')=='stable' for s in saved)
+    saved=revisions.all();rows=store.rows();done=args.resume and bool(rows) and not store.status()['pending'] and all(s.get('textState')=='stable' for s in saved) and revisions.get('cursor',0)>=max(r[3] for r in rows)/1000
     streaming=bool(config.get('streamingSTT'));phrase=None;last_labels=0.
     audio=queue.Queue();inbox=queue.Queue()
     if getattr(args,'system_audio_helper',None) and not args.resume and not args.input_wav:
@@ -152,17 +153,23 @@ def run(args,emit):
                 if not did_work:
                     try:inbox.put(inbox.get(timeout=.2))
                     except queue.Empty:pass
+            if failed:
+                from stage_artifacts import digest_file
+                emit({'type':'postprocess_stage','session':root.name,'stage':'asr','inputKey':digest_file(root/'pipeline.json'),'status':'failed','message':'전사 실패 · 원음을 보존했습니다.'})
+            if not failed:
+                revisions.export()
+                from stage_artifacts import digest_file
+                emit({'type':'postprocess_stage','session':root.name,'stage':'asr','inputKey':digest_file(root/'transcript.json'),'status':'succeeded'})
             if not failed and session and config.get('retranscribeAfterStop'):
                 try:
-                    revisions.export()
-                    from retranscribe import run as retranscribe
                     emit({'type':'status',**store.status(),'state':'의심 구간 재전사 후보 생성 중'})
-                    requested=set(revisions.get('suspectIds',[]))
-                    from retranscribe import reason
-                    ids=[s['id'] for s in revisions.all() if s['id'] in requested or reason(s)]
-                    retranscribe(root,session,context,ids=ids)
-                except Exception as e:emit({'type':'status',**store.status(),'state':'재전사 후보 보류 · 상세 보기에서 다시 시도 가능','diagnostics':{**cap.diagnostics,'retranscriptionError':str(e)}})
-    except BaseException:failed=True;raise
+                    from postprocess_rescan import run as post_rescan
+                    post_rescan(root,args,emit,session)
+                except Exception as e:emit({'type':'status',**store.status(),'state':'재전사 후보 보류 · 처리 단계에서 다시 시도 가능','diagnostics':{**cap.diagnostics,'retranscriptionError':str(e)}})
+    except BaseException as e:
+        failed=True
+        emit({'type':'postprocess_stage','session':root.name,'stage':'asr','inputKey':hashlib.sha256(str(root).encode()).hexdigest(),'status':'failed','message':str(e)})
+        raise
     finally:
         from worker_cleanup import cleanup
         def drain():

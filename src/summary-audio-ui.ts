@@ -6,10 +6,10 @@ import {audioRange} from './audio-review';
 import {timestamp} from './model';
 import {contentLinks,hrefRanges} from './summary-content';
 const refreshLinks=StateEffect.define<null>();
-interface PlaybackHost {root:()=>string;recording:()=>boolean;systemAudio?:()=>boolean;fileOf:(view:EditorView)=>string|undefined;}
+interface PlaybackHost {root:()=>string;resolveRecording?:(session:string)=>Promise<string>;recording:()=>boolean;systemAudio?:()=>boolean;fileOf:(view:EditorView)=>string|undefined;}
 /** One local player for all summary links; replacing or unloading it always stops audio. */
 export class SummaryAudio {
- readonly extension;private views=new Set<EditorView>();private roots=new Map<HTMLElement,string>();private player?:RangePlayer;private disposed=false;private linkEvents=new AbortController();private linkOwner=crypto.randomUUID();
+ readonly extension;private views=new Set<EditorView>();private roots=new Map<HTMLElement,string>();private player?:RangePlayer;private disposed=false;private playRequest=0;private linkEvents=new AbortController();private linkOwner=crypto.randomUUID();
  constructor(private app:App,readonly index:SummaryAudioIndex,private host:PlaybackHost){
   const owner=this;
   this.extension=ViewPlugin.fromClass(class {
@@ -32,8 +32,8 @@ export class SummaryAudio {
  content(session:string,text:string,ranges:PlaybackRange[]){const span=document.createElement('span');span.className='lm-audio-content';span.textContent=text;span.tabIndex=0;span.setAttribute('role','link');setTooltip(span,ranges.map(r=>r.label).join(' · ')+' · 클릭하여 녹음 재생');span.addEventListener('click',()=>{if(window.getSelection()?.isCollapsed!==false)this.playContent(session,ranges);});span.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();this.playContent(session,ranges);}});return span;}
  playContent(session:string,ranges:PlaybackRange[]){if(this.disposed)return;if(ranges.length===1)this.play(session,ranges[0]!);else{const modal=new Modal(this.app);modal.setTitle('재생할 녹음 구간');for(const r of ranges)modal.contentEl.createEl('button',{text:r.label}).addEventListener('click',()=>{modal.close();this.play(session,r);});modal.open();}}
  button(session:string,range:PlaybackRange){const button=document.createElement('button');button.className='lm-audio-range';button.type='button';button.textContent=range.label;button.title='이 구간 녹음 재생';button.setAttribute('aria-label',range.label+' 녹음 재생');button.addEventListener('mousedown',e=>e.preventDefault());button.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();this.play(session,range);});return button;}
- play(session:string,range:PlaybackRange){if(this.disposed)return;if(this.host.recording()&&this.host.systemAudio?.()){new Notice('시스템 오디오를 녹음하는 동안에는 녹음 구간을 재생할 수 없습니다.',8000);return;}this.player?.close();try{this.player=new RangePlayer(this.app,recordingPath(this.host.root(),session),range,this.host.recording);this.player.open();}catch(e){new Notice(String(e),8000);}}
- stop(){this.player?.close();this.player=undefined;}
+ async play(session:string,range:PlaybackRange){if(this.disposed)return;if(this.host.recording()&&this.host.systemAudio?.()){new Notice('시스템 오디오를 녹음하는 동안에는 녹음 구간을 재생할 수 없습니다.',8000);return;}const request=++this.playRequest;this.player?.close();try{const path=this.host.resolveRecording?await this.host.resolveRecording(session):recordingPath(this.host.root(),session);if(this.disposed||request!==this.playRequest)return;this.player=new RangePlayer(this.app,path,range,this.host.recording);this.player.open();}catch(e){new Notice(String(e),8000);}}
+ stop(){this.playRequest++;this.player?.close();this.player=undefined;}
  dispose(){this.disposed=true;this.linkEvents.abort();this.stop();for(const root of this.roots.keys())for(const link of Array.from(root.querySelectorAll<HTMLElement>('[data-lm-audio]'))){delete link.dataset.lmAudio;link.classList.remove('lm-audio-content');}for(const root of this.roots.keys())for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('.lm-audio-range')))button.replaceWith(document.createTextNode(button.textContent??''));this.roots.clear();}
 }
 class ContentLink extends WidgetType {constructor(private owner:SummaryAudio,private session:string,private text:string,private ranges:PlaybackRange[]){super();}eq(other:ContentLink){return this.session===other.session&&this.text===other.text&&JSON.stringify(this.ranges)===JSON.stringify(other.ranges);}toDOM(){return this.owner.content(this.session,this.text,this.ranges);}ignoreEvent(){return true;}}

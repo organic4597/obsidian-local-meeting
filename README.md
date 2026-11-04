@@ -130,4 +130,4 @@ OpenAI 요약·결정 사항과 일정 후보는 선택적으로 제공하며 �
 
 P1 오류 수정, 반복 오인식 사전 후보와 종료 후 의심 구간 재전사는 [beta.5 사용 안내](docs/P1-STABILIZATION.ko.md)를 참고하세요.
 
-다음 구현의 범위와 기존 데이터 보존 조건은 [저장 위치 연결·단계별 재시도 계획](docs/STORAGE-RETRY-PLAN.ko.md)에 정리했습니다. 현재는 계획 단계입니다.
+새 회의의 날짜별 문서 생성, 기존 녹음의 저장 위치 연결, 단계별 이어서 처리는 [beta.6 사용 안내](docs/STORAGE-RETRY.ko.md)를 참고하세요. [원래 구현 계획](docs/STORAGE-RETRY-PLAN.ko.md)도 보존했습니다.

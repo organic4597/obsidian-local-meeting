@@ -9,7 +9,7 @@ def bounds(count,mode):
     if not isinstance(count,int) or not 0<=count<=32 or mode not in ('maximum','exact'):raise ValueError('화자 수는 0~32명, 방식은 상한 또는 고정이어야 합니다.')
     return {} if not count else {'num_speakers':count} if mode=='exact' else {'max_speakers':count}
 
-def run(root,model,count=0,mode='maximum',emit=print):
+def run(root,model,count=0,mode='maximum',emit=print,output_root=None):
     root=Path(root);model=Path(model).resolve();options=bounds(count,mode)
     config=json.loads((root/'pipeline.json').read_text()) if (root/'pipeline.json').exists() else {}
     voice_enabled=config.get('voiceProfiles') is True
@@ -22,7 +22,12 @@ def run(root,model,count=0,mode='maximum',emit=print):
         with (model/name).open('rb') as f:
             for block in iter(lambda:f.read(1024*1024),b''):manifest.update(block)
     pass_id=hashlib.sha256(f'community-mps:1:{digest.hexdigest()}:{manifest.hexdigest()}:{mode}:{count}'.encode()).hexdigest()
-    target=root/'community-refinement.json'
+    output_root=Path(output_root) if output_root else root;output_root.mkdir(parents=True,exist_ok=True)
+    target=output_root/'community-refinement.json'
+    legacy=root/'community-refinement.json'
+    if not target.exists() and legacy.exists():
+        saved=json.loads(legacy.read_text())
+        if saved.get('passId')==pass_id and not voice_enabled:write_atomic(target,saved);emit(saved);return saved
     if target.exists():
         saved=json.loads(target.read_text())
         feature_path=root/'voice-features.json';features_valid=False
@@ -49,13 +54,13 @@ def run(root,model,count=0,mode='maximum',emit=print):
         from voice_features import features_from_output,save_features
         try:
             features=features_from_output(output.speaker_diarization.labels(),output.speaker_embeddings,turns,manifest.hexdigest(),pass_id,root.name)
-            if features is not None:save_features(root,features)
+            if features is not None:save_features(output_root,features)
         except Exception as e:emit({'type':'status','pending':0,'lag':0,'state':'화자 특징 수집 실패 · 전사 결과는 보존됨','diagnostics':{'voiceProfileError':str(e)}})
     result={'type':'speaker_refinement','session':root.name,'passId':pass_id,'preset':'community-1-mps','turns':turns,'detectedSpeakers':len({t['speaker'] for t in turns}),'processingSeconds':round(time.monotonic()-began,4),'speakerCount':count,'speakerCountMode':mode,'peakRssBytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}
     write_atomic(target,result);emit(result);return result
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--session',required=True);p.add_argument('--model',required=True);p.add_argument('--count',type=int,default=0);p.add_argument('--mode',choices=['maximum','exact'],default='maximum');args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--session',required=True);p.add_argument('--model',required=True);p.add_argument('--count',type=int,default=0);p.add_argument('--output-root');p.add_argument('--mode',choices=['maximum','exact'],default='maximum');args=p.parse_args()
     def emit(event):print(json.dumps(event,ensure_ascii=False),flush=True)
-    try:run(args.session,args.model,args.count,args.mode,emit)
+    try:run(args.session,args.model,args.count,args.mode,emit,args.output_root)
     except Exception as e:emit({'type':'error','message':f'Community-1 화자 처리 실패: {e}'});sys.exit(1)

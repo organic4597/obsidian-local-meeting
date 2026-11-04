@@ -22,7 +22,7 @@ function align(weights:number[][]){
  const pairs:[number,number][]=[];for(let j=1;j<=n;j++)if(p[j]<=rows&&j<=cols&&(weights[p[j]-1]?.[j-1]??0)>0)pairs.push([p[j]-1,j-1]);return pairs;
 }
 export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0){
- if(meeting.speakerPassId===pass.passId)return [];
+ if((meeting.refinementApplicationId??meeting.speakerPassId)===(pass.applicationId??pass.passId))return [];
  delete meeting.voiceAutoAssignments;
  const clusters=[...new Set(pass.turns.map(t=>t.speaker))].sort(),old=[...new Set(meeting.segments.map(s=>s.speaker).filter(id=>known(id)&&!isUnconfirmedSpeaker(meeting,id)))].sort((a,b)=>meeting.segments.filter(s=>s.speaker===b).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)-meeting.segments.filter(s=>s.speaker===a).reduce((n,s)=>n+(s.end-s.start)*(s.speakerLocked?10:1),0)).slice(0,32);
  const spans=new Map(meeting.segments.map(s=>[s.id,evidence(pass.turns,s.start,s.end)]));
@@ -34,6 +34,8 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
   const row=weights[i]!,total=row.reduce((a,b)=>a+b,0);
   if(total&&row[j]!/total>=.65)mapping.set(clusters[i]!,old[j]!);
  }
+ // A later word-alignment attempt on the same audio pass keeps the cluster identities.
+ if(meeting.speakerPassId===pass.passId)for(const c of clusters){const prior=meeting.speakerClusters?.[c];if(prior&&!mapping.has(c)&&!Array.from(mapping.values()).includes(prior)&&prior in meeting.speakers)mapping.set(c,prior);}
  const hasPeople=Object.keys(meeting.speakers).some(id=>!isUnconfirmedSpeaker(meeting,id));
  for(const c of clusters)if(!mapping.has(c)){
   // A split cluster must get its own slot instead of inheriting the same old name twice.
@@ -62,6 +64,6 @@ export function refineSpeakers(meeting:Meeting,pass:SpeakerRefinement,expected=0
  }
  for(const id of Object.keys(meeting.speakers))if(id.startsWith('live_')&&isUnconfirmedSpeaker(meeting,id)&&!meeting.segments.some(s=>s.speaker===id))delete meeting.speakers[id];
  const warning=expected>pass.detectedSpeakers?`예상 ${expected}명 중 ${pass.detectedSpeakers}개 화자만 검출했습니다. 서로 다른 사람이 합쳐졌을 수 있습니다. 원음을 확인해 새 참여자로 직접 지정하세요.`:'';
- meeting.transcriptMode='dialogue';meeting.speakerPassId=pass.passId;meeting.speakerRefinement={detected:pass.detectedSpeakers,expected,warning,processingSeconds:pass.processingSeconds};
+ meeting.transcriptMode='dialogue';meeting.refinementApplicationId=pass.applicationId??pass.passId;meeting.speakerPassId=pass.passId;meeting.speakerRefinement={detected:pass.detectedSpeakers,expected,warning,processingSeconds:pass.processingSeconds};
  return changed;
 }

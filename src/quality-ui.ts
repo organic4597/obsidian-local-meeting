@@ -13,6 +13,7 @@ export interface QualityHost {
  openRetranscriptionCandidates():Promise<void>;
  markSuspect(id:string):Promise<void>;
  retranscribeSegment(id:string):Promise<void>;
+ recordingFile():Promise<string>;
  dictionary():LocalDictionary;
  dictionaryChanged():Promise<void>;
  exportDictionary(format:'json'|'csv'):Promise<void>;
@@ -151,7 +152,7 @@ class ReviewDetail extends Modal {
   button(player,'이 구간 원음 재생',async()=>{
    if(this.host.bridge&&!headphones.checked)throw new Error('스피커 소리가 다시 녹음될 수 있습니다. 녹음을 마치거나 헤드폰을 확인해 주세요.');
    this.audio?.pause();if(this.url)URL.revokeObjectURL(this.url);
-   const pcm=await audioRange(join(m.directory,'recording.wav'),s.start,s.end);this.url=URL.createObjectURL(new Blob([pcm as BlobPart],{type:'audio/wav'}));
+   const pcm=await audioRange(await this.host.recordingFile(),s.start,s.end);this.url=URL.createObjectURL(new Blob([pcm as BlobPart],{type:'audio/wav'}));
    this.audio??=player.createEl('audio',{attr:{controls:'true','aria-label':'발언 원음'}});this.audio.src=this.url;await this.audio.play();
   });
   if(s.rawText)root.createEl('p',{text:'인식 원문: '+s.rawText,cls:'lm-raw-transcript'});

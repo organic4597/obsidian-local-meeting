@@ -18,7 +18,7 @@ export function refinePreview(meeting:Meeting,pass:SpeakerRefinement,expected=0)
  const doc=transcriptChanges('',copy,copy.segments.map(s=>s.id)).text;
  splitAlignedSpeakers(copy,pass,doc);refineSpeakers(copy,pass,expected);
  meeting.segments=copy.segments;meeting.speakers=copy.speakers;meeting.speakerCandidates=copy.speakerCandidates;meeting.speakerClusters=copy.speakerClusters;meeting.speakerClusterConflicts=copy.speakerClusterConflicts;meeting.voiceAutoAssignments=copy.voiceAutoAssignments;meeting.originalSegments=copy.originalSegments;
- meeting.speakerPassId=copy.speakerPassId;meeting.speakerRefinement=copy.speakerRefinement;meeting.transcriptMode=copy.transcriptMode;
+ meeting.refinementApplicationId=copy.refinementApplicationId;meeting.speakerPassId=copy.speakerPassId;meeting.speakerRefinement=copy.speakerRefinement;meeting.transcriptMode=copy.transcriptMode;
  meeting.presentation='committing';
 }
 const segmenter=new Intl.Segmenter('ko',{granularity:'grapheme'});
