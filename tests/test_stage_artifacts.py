@@ -22,6 +22,12 @@ class StageTests(unittest.TestCase):
   (first.parent/'features.json').write_text('corrupted')
   self.assertEqual(self.stages.run('test',{'input':1},work),{'value':2});self.assertIsNone(count[-1]);self.assertEqual(first.read_bytes(),original)
   self.assertEqual(self.stages.run('test',{'input':2},work),{'value':3})
+ def test_malformed_manifests_recompute_instead_of_trusting_or_blocking(self):
+  for broken in [None,[],{'attempt':None,'files':{},'complete':True},{'attempt':'../outside','files':{},'complete':True},{'files':[],'complete':'false'}]:
+   self.stages.run('broken',1,lambda out,old:{'value':'initial'})
+   artifact=self.root/self.events[-1]['artifact'];pointer=artifact.parent.parent/'latest.json';pointer.write_text(json.dumps(broken))
+   self.assertEqual(self.stages.run('broken',1,lambda out,old:{'value':'recomputed'}),{'value':'recomputed'})
+   self.assertFalse(self.events[-1]['cached'])
  def test_partial_results_retry_and_failures_are_not_cached(self):
   first=self.stages.run('test',1,lambda out,old:{'completed':['a'],'pending':['b']},lambda x:not x['pending'])
   self.assertEqual(self.events[-1]['status'],'waiting_input')
@@ -36,7 +42,7 @@ class StageTests(unittest.TestCase):
     with session_lock(self.root):pass
   write_atomic(self.root/'.postprocess-compute.lock',{'pid':2147483647,'token':'stale'})
   with session_lock(self.root):self.assertTrue((self.root/'.postprocess-compute.lock').exists())
-  self.assertFalse((self.root/'.postprocess-compute.lock').exists())
+  with session_lock(self.root):pass # Persistent lock file is harmless after ownership is released.
  def test_model_fingerprint_includes_weights_not_only_config(self):
   model=self.root/'model';model.mkdir();(model/'config.json').write_text('{}');(model/'weights.safetensors').write_bytes(b'v1');first=model_digest(model);(model/'weights.safetensors').write_bytes(b'v2');self.assertNotEqual(first,model_digest(model))
  def test_completed_resume_replays_without_asr_or_changing_originals(self):

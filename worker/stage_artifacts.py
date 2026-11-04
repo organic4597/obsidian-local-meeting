@@ -19,24 +19,17 @@ def model_digest(folder):
 
 @contextlib.contextmanager
 def session_lock(root,name='.postprocess-compute.lock'):
-    path=Path(root)/name;token=str(uuid.uuid4())
-    for _ in range(2):
+    # Keep the inode stable: unlinking a stale PID lock can race another starter.
+    # The OS releases flock even on SIGKILL; leftover metadata is not ownership.
+    import fcntl
+    path=Path(root)/name;fd=os.open(path,os.O_CREAT|os.O_RDWR,0o600)
+    with os.fdopen(fd,'r+') as f:
+        try:fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:raise RuntimeError('이 회의의 다른 후처리가 실행 중입니다.')
         try:
-            fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
-            with os.fdopen(fd,'w') as f:json.dump({'pid':os.getpid(),'token':token},f);f.flush();os.fsync(f.fileno())
-            break
-        except FileExistsError:
-            try:
-                data=json.loads(path.read_text());os.kill(data['pid'],0)
-            except ProcessLookupError:path.unlink();continue
-            except Exception:raise RuntimeError('후처리 잠금 상태를 확인해 주세요.')
-            raise RuntimeError('이 회의의 다른 후처리가 실행 중입니다.')
-    else:raise RuntimeError('후처리 잠금을 얻지 못했습니다.')
-    try:yield
-    finally:
-        try:
-            if json.loads(path.read_text()).get('token')==token:path.unlink()
-        except FileNotFoundError:pass
+            f.seek(0);f.truncate();json.dump({'pid':os.getpid(),'token':str(uuid.uuid4())},f);f.flush();os.fsync(f.fileno())
+            yield
+        finally:fcntl.flock(f,fcntl.LOCK_UN)
 
 class StageArtifacts:
     def __init__(self,root,emit):self.root=Path(root).resolve();self.emit=emit
@@ -44,7 +37,9 @@ class StageArtifacts:
     def run(self,stage,inputs,work,complete=lambda data:True):
         code={name:digest_file(Path(__file__).with_name(name)) for name in {'diarization':['stage_artifacts.py','community_diarize.py','community_pipeline.py','voice_features.py'],'alignment':['stage_artifacts.py','post_alignment.py'],'rescan':['stage_artifacts.py','postprocess_rescan.py','retranscribe.py','dictionary.py']}.get(stage,[]) };key=hashlib.sha256(json.dumps({'schema':1,'code':code,'stage':stage,'inputs':inputs},sort_keys=True).encode()).hexdigest();base=self.root/'postprocess'/'artifacts'/stage/key;pointer=base/'latest.json';previous=None
         try:
-            manifest=json.loads(pointer.read_text());uuid.UUID(manifest['attempt']);
+            manifest=json.loads(pointer.read_text())
+            if not isinstance(manifest,dict) or not isinstance(manifest.get('files'),dict) or type(manifest.get('complete')) is not bool:raise ValueError('Invalid artifact manifest')
+            uuid.UUID(manifest['attempt']);
             if any(Path(p).is_absolute() or '..' in Path(p).parts for p in manifest.get('files',{})):raise ValueError('Invalid artifact path')
             result=base/manifest['attempt']/'result.json'
             if manifest['inputKey']==key and digest_file(result)==manifest['sha256']:
@@ -53,7 +48,7 @@ class StageArtifacts:
                 if valid and manifest['complete']:
                     self.event(stage,key,'succeeded',cached=True,artifact=str(result.relative_to(self.root)));return previous
                 if not valid:previous=None
-        except (OSError,ValueError,KeyError):pass
+        except (OSError,ValueError,KeyError,TypeError,AttributeError):previous=None
         attempt=str(uuid.uuid4());out=base/attempt;out.mkdir(parents=True);self.event(stage,key,'running')
         try:
             data=work(out,previous);write_atomic(out/'result.json',data)
