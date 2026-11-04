@@ -1,4 +1,5 @@
 import {EditorView,ViewPlugin} from '@codemirror/view';
+import {ViewUpdate} from '@codemirror/view';
 import {ChangeSet} from '@codemirror/state';
 import {transcriptTransaction} from './editor-changes';
 import {previewExtension,setPreview,PreviewFrame} from './editor-preview';
@@ -9,12 +10,12 @@ export class MeetingEditors {
  private views=new Set<EditorView>();private disposed=false;
  private previews=new Map<string,{key:string;reveal:TextReveal;final:boolean;frame:PreviewFrame;timer?:ReturnType<typeof setTimeout>;last:number;resolve?: (ok:boolean)=>void}>();
  readonly extension;
- constructor(private fileOf:(view:EditorView)=>string|undefined,private paused:(value:boolean)=>void){
+ constructor(private fileOf:(view:EditorView)=>string|undefined,private paused:(value:boolean)=>void,private edited?:(path:string,update:ViewUpdate)=>void){
   const views=this.views,host=this;
   this.extension=[previewExtension,ViewPlugin.fromClass(class {
    path:string|undefined;
    constructor(readonly view:EditorView){views.add(view);this.path=host.fileOf(view);queueMicrotask(()=>{if(views.has(view))host.paint(view);});}
-   update(){const path=host.fileOf(this.view);if(path!==this.path){this.path=path;queueMicrotask(()=>{if(views.has(this.view))host.paint(this.view);});}}
+   update(update:ViewUpdate){const path=host.fileOf(this.view);if(path&&update.docChanged)host.edited?.(path,update);if(path!==this.path){this.path=path;queueMicrotask(()=>{if(views.has(this.view))host.paint(this.view);});}}
    destroy(){views.delete(this.view);}
   })];
  }

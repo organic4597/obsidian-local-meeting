@@ -1,7 +1,7 @@
 """Audio callback -> bounded RAM queue -> atomic PCM WAV disk spool.
 Capture and disk writer run independently from the MLX inference thread.
 """
-import os
+import os,time
 import queue
 import threading
 import wave
@@ -124,7 +124,7 @@ class Capture:
         rms=math.sqrt(sum(v*v for v in samples)/len(samples))/32768
         self.diagnostics={**self.diagnostics,'peakDbfs':round(20*math.log10(max(peak,1e-6)),1),
             'rmsDbfs':round(20*math.log10(max(rms,1e-6)),1),'samples':self.diagnostics['samples']+len(samples),
-            'clippedSamples':self.diagnostics['clippedSamples']+sum(abs(v)>=32760 for v in samples)}
+            'captureWallTimeMs':round(time.time()*1000),'clippedSamples':self.diagnostics['clippedSamples']+sum(abs(v)>=32760 for v in samples)}
 
     def stop(self):
         with self.stop_lock:

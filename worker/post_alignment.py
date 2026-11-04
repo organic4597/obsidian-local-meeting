@@ -17,13 +17,13 @@ def offsets(text,words,start_ms,end_ms):
     if cursor<len(clean):raise ValueError('정렬에서 일부 문자가 누락됐습니다.')
     return out
 
-def align(root,model,emit,turns=None):
+def align(root,model,emit,turns=None,output_root=None,previous=None):
     root=Path(root);path=root/'transcript.json'
     if not path.exists():return {}
     source=json.loads(path.read_text());segments=source.get('segments',[]);model=Path(model)
     if not (model/'config.json').is_file():raise ValueError('로컬 텍스트 정렬 모델이 필요합니다.')
     signature=hashlib.sha256(json.dumps({'segments':segments,'turns':turns},sort_keys=True,ensure_ascii=False).encode()+(model/'config.json').read_bytes()).hexdigest()
-    target=root/'word-alignment.json'
+    target=(Path(output_root) if output_root else root)/'word-alignment.json'
     if target.exists():
         cached=json.loads(target.read_text())
         if cached.get('sourceHash')==signature and all(not s.get('reviewRequired') for s in cached['segments'].values()):return cached['segments']
@@ -43,6 +43,10 @@ def align(root,model,emit,turns=None):
                     if sum(ms>=250 for ms in duration.values())<2:continue
                 w.setpos(min(w.getnframes(),max(0,round(s['start']*16))));raw=w.readframes(round((s['end']-s['start'])*16))
                 if not raw:continue
+                if previous and s['id'] in previous:
+                    old=previous[s['id']]
+                    if old.get('text')==s['text'] and not old.get('reviewRequired'):
+                        results[s['id']]=old;continue
                 try:
                     words=aligner.align(np.frombuffer(raw,dtype='<i2').astype(np.float32)/32768,s['text'],'Korean')
                     results[s['id']]={'text':s['text'],'words':offsets(s['text'],words,s['start'],s['end'])}

@@ -1,0 +1,2 @@
+{"probe": "speaker_slots", "initial": ["live_1", "live_2"], "late": "unknown", "next_id": 3}
+{"probe": "capture_cleanup", "reported": "cleanup_capture_error", "transcript_exported": false, "metrics_written": false}
