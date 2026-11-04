@@ -1,0 +1,124 @@
+{
+  "version": "0.13.0",
+  "verifiedAt": "2026-11-04T01:14:39.176215+00:00",
+  "automaticTests": {
+    "typescript": 145,
+    "python": 76,
+    "failed": 0
+  },
+  "npmAudit": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "pythonDependencyConflicts": 0,
+  "realAudioRuns": [
+    {
+      "schemaVersion": 1,
+      "audioPlayback": false,
+      "apiCalls": false,
+      "checks": [
+        {
+          "name": "backlog",
+          "audioSeconds": 120,
+          "elapsedSeconds": 64.0,
+          "segments": 10,
+          "pcmExact": true,
+          "pending": 0
+        },
+        {
+          "name": "cached-retry",
+          "attempt": 1,
+          "elapsedSeconds": 1.41,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "cached-retry",
+          "attempt": 2,
+          "elapsedSeconds": 1.37,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "cached-retry",
+          "attempt": 3,
+          "elapsedSeconds": 1.36,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "damaged-cache-recomputed",
+          "elapsedSeconds": 13.46,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "kill-recover",
+          "capturedSeconds": 11.0,
+          "elapsedSeconds": 12.93,
+          "pcmExact": true,
+          "wavBackupExact": true,
+          "duplicateWorkerRejected": true,
+          "stableSegmentsRetained": 0
+        }
+      ],
+      "result": "pass"
+    },
+    {
+      "schemaVersion": 1,
+      "audioPlayback": false,
+      "apiCalls": false,
+      "checks": [
+        {
+          "name": "backlog",
+          "audioSeconds": 24,
+          "elapsedSeconds": 15.65,
+          "segments": 2,
+          "pcmExact": true,
+          "pending": 0
+        },
+        {
+          "name": "cached-retry",
+          "attempt": 1,
+          "elapsedSeconds": 1.32,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "cached-retry",
+          "attempt": 2,
+          "elapsedSeconds": 1.31,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "cached-retry",
+          "attempt": 3,
+          "elapsedSeconds": 1.31,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "damaged-cache-recomputed",
+          "elapsedSeconds": 5.96,
+          "sourceFilesUnchanged": true
+        },
+        {
+          "name": "kill-recover",
+          "capturedSeconds": 23.0,
+          "elapsedSeconds": 12.31,
+          "pcmExact": true,
+          "wavBackupExact": true,
+          "duplicateWorkerRejected": true,
+          "stableSegmentsRetained": 1
+        }
+      ],
+      "result": "pass"
+    }
+  ],
+  "package": {
+    "name": "obsidian-local-meeting-v0.13.0-macos-arm64.zip",
+    "sha256": "1d24459085d05e2b56c4851c44d731125dc512a0e15eec2f28343472cccb8964",
+    "verifiedExtractedFiles": 31,
+    "nativeExecutablePermissions": true,
+    "nativeSignatureVerification": true,
+    "pythonImports": true
+  }
+}
