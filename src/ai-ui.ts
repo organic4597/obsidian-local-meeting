@@ -1,10 +1,12 @@
+import {AISkillHost,renderAISkillSettings} from './ai-skills-ui';
+import {AISkillSettings} from './ai-skills';
 import {App,Modal,Notice,Setting} from 'obsidian';
 import {AuthStatus,ModelChoice} from './openai-auth';
 import {SummaryResult,MeetingEvent,MeetingTask,MeetingTerm} from './ai-summary';
 import {ReviewItem} from './summary-review';
 import {eventDateLabel} from './meeting-dates';
-export interface AIHost {
- settings:{aiModel:string;aiAutoSummary:boolean;dictionaryProject:string};
+export interface AIHost extends AISkillHost {
+ settings:{aiSkills:AISkillSettings;aiModel:string;aiAutoSummary:boolean;dictionaryProject:string};
  aiStatus():Promise<AuthStatus>;aiLogin(add?:boolean):Promise<void>;aiCancel():void;aiLogout():Promise<void>;aiSelect(id:string):Promise<void>;aiModels():Promise<ModelChoice[]>;saveAISettings():Promise<void>;
  testAIConnection():Promise<void>;generateSummary():Promise<void>;extractTerms():Promise<void>;currentSummary():Promise<SummaryResult|null>;openSummary():Promise<void>;refreshSummaryLayout():Promise<void>;createReviewedSummary():Promise<void>;openCalendarDraft(event:MeetingEvent):Promise<void>;
  reviewItems():Promise<ReviewItem[]>;updateReview(id:string,edited:ReviewItem['edited'],status:ReviewItem['status']):Promise<void>;saveTermCandidate(item:ReviewItem,canonical:string,scope:'meeting'|'project'|'vault'|'personal'):Promise<void>;addReviewedTask(item:ReviewItem):Promise<void>;clearUncertainTask(item:ReviewItem):Promise<void>;openReviewedCalendar(item:ReviewItem,allowSimilar?:boolean):Promise<void>;clearUncertainCalendar(item:ReviewItem):Promise<void>;summaryChanged():Promise<boolean>;reviewRanges(item:ReviewItem):Promise<string[]>;playReviewRange(item:ReviewItem,index:number):Promise<void>;
@@ -19,12 +21,13 @@ export class AIControlsModal extends Modal {
   const generation=++this.generation,status=await this.host.aiStatus();if(this.closed||generation!==this.generation)return;const root=this.contentEl,scroll=root.scrollTop,folds=new Map(Array.from(root.querySelectorAll<HTMLDetailsElement>('details[data-section]')).map(d=>[d.dataset.section,d.open]));root.empty();
   root.createEl('p',{text:status.planAllowed?'ChatGPT 연결됨 · 음성은 로컬에 보관하고 회의 텍스트만 정리합니다.':'ChatGPT로 연결해 요약·할 일·일정을 정리하세요.',cls:'lm-hint'});
   if(!status.planAllowed){this.action(root,'Continue with ChatGPT',()=>this.host.aiLogin(),true);root.createEl('button',{text:'로그인 취소'}).addEventListener('click',()=>this.host.aiCancel());}
+  renderAISkillSettings(root,this.host,this.busy);
   const result=await this.host.currentSummary();if(this.closed||generation!==this.generation)return;
   const actions=root.createDiv({cls:'lm-form-actions'});
   if(result)this.action(actions,'정리 노트 열기',async()=>{await this.host.openSummary();this.close();},true);
   const generate=this.action(actions,result?'최신 내용으로 다시 정리':'회의 정리 만들기 / 다시 시도',()=>this.host.generateSummary(),!result);generate.disabled=this.busy||!status.planAllowed;
   if(result){this.action(root,'문장 클릭으로 듣는 정리 노트 만들기',async()=>{await this.host.refreshSummaryLayout();this.close();});root.createEl('p',{text:'정리 문장에 마우스를 올리면 녹음 시간이 표시되고 클릭하면 재생합니다. 기존 노트는 보존합니다.',cls:'lm-hint'});}
-  if(result){if(await this.host.summaryChanged())root.createEl('p',{text:'원문이 변경됐습니다. 이 정리는 이전 내용을 기준으로 합니다.',cls:'lm-hint'});if(result.value.terms===undefined){root.createEl('p',{text:'이전 정리에는 용어 후보가 없습니다. 추출하면 회의 텍스트로 AI를 다시 요청합니다.',cls:'lm-hint'});const extract=this.action(root,'용어 후보 추출',()=>this.host.extractTerms());extract.disabled=this.busy||!status.planAllowed;}this.action(root,'검토한 내용으로 새 노트 만들기',async()=>{await this.host.createReviewedSummary();this.close();});const items=await this.host.reviewItems();if(this.closed||generation!==this.generation)return;
+  if(result){if(await this.host.summaryChanged())root.createEl('p',{text:'원문 또는 AI 스킬 설정이 변경됐습니다. 최신 내용으로 다시 정리할 수 있습니다.',cls:'lm-hint'});if(result.value.terms===undefined){root.createEl('p',{text:'이전 정리에는 용어 후보가 없습니다. 추출하면 회의 텍스트로 AI를 다시 요청합니다.',cls:'lm-hint'});const extract=this.action(root,'용어 후보 추출',()=>this.host.extractTerms());extract.disabled=this.busy||!status.planAllowed;}this.action(root,'검토한 내용으로 새 노트 만들기',async()=>{await this.host.createReviewedSummary();this.close();});const items=await this.host.reviewItems();if(this.closed||generation!==this.generation)return;
    root.createEl('p',{text:'항목을 수정한 뒤 확인 또는 수정 저장을 누르세요. 기존 정리 노트는 덮어쓰지 않습니다.',cls:'lm-hint'});for(const [kind,label] of [['decision','결정 사항'],['task','할 일'],['event','일정 후보'],['question','확인할 사항'],['term','새 용어 후보']] as const){const section=root.createEl('details',{cls:'lm-review-group'});section.dataset.section='review-'+kind;const group=items.filter(i=>i.kind===kind);section.open=folds.get(section.dataset.section)??(kind==='term'&&group.length>0);section.createEl('summary',{text:`${label} · ${group.length}개`});if(!group.length){section.createEl('p',{text:kind==='term'&&result.value.terms===undefined?'이전 정리에는 용어 추출 결과가 없습니다.':'확인할 항목이 없습니다.',cls:'lm-hint'});continue;}for(const item of group)this.renderReview(section,item);}
   }
   let models:ModelChoice[]=[];if(status.planAllowed)try{models=await this.host.aiModels();}catch(e){if(!this.closed&&generation===this.generation)root.createEl('p',{text:'모델 목록을 불러오지 못했습니다. 연결을 확인한 뒤 정리를 다시 시도하세요. '+String(e),cls:'lm-error'});}

@@ -1,0 +1,29 @@
+{
+  "id": "stop-slop-ko",
+  "repository": "https://github.com/limleesol/stop-slop-ko",
+  "commit": "66b7a9b4065f9a89b454743ceb64e89b33fde96d",
+  "license": "MIT",
+  "sourcePath": "SKILL.md",
+  "files": {
+    "SKILL.md": {
+      "upstreamPath": "SKILL.md",
+      "blob": "3938149a88ad15b972fde4512f7ddcf6b525d6e5",
+      "sha256": "ead093e8643ca10bddb9bede51124e333c8c6644acb0ea1638e25d34dc653719"
+    },
+    "LICENSE": {
+      "upstreamPath": "LICENSE",
+      "blob": "f487e28cb5990c670022be693847db6be769eb61",
+      "sha256": "8b6c098ded0f35d1d59cc7d9eee45c5f9f41edb849f76d4967f2fd8dca02609a"
+    },
+    "references/technical.md": {
+      "upstreamPath": "references/technical.md",
+      "blob": "598a23f035ad4d6f17eba7e3f80ba3ada938ccbe",
+      "sha256": "02d6af83cf47afe6ba6ae4a8fa100fba70389e1b85316708c34d45ed6453a08d"
+    },
+    "references/planning.md": {
+      "upstreamPath": "references/planning.md",
+      "blob": "45bd8feee3f16a5163ca91b328d7548198051e71",
+      "sha256": "a67688cb003c7c0ecf86c50cdd4fc69e6b4910493031e60a596e29892ab0c562"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "summarize-meeting",
+  "repository": "https://github.com/tomzx/agents",
+  "commit": "e9c4674dd39717e185bed40b7b964d3b794be89d",
+  "license": "MIT",
+  "sourcePath": "skills/summarize-meeting/SKILL.md",
+  "files": {
+    "SKILL.md": {
+      "upstreamPath": "skills/summarize-meeting/SKILL.md",
+      "blob": "06c3ba9bf16b3acfa2bde24ecfa074de2970d7eb",
+      "sha256": "edb531b4873e4dfa5832a07fd77e144a4cba89c4b72bea601b5612e21b584953"
+    },
+    "LICENSE": {
+      "upstreamPath": "LICENSE",
+      "blob": "215d1bb853913b3b94911c3cea244ad6050c57aa",
+      "sha256": "6bf8777a0c68115318a97ccfa2a3dd7b041a9986f1e69b2a834387f0b1120553"
+    }
+  }
+}

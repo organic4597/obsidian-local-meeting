@@ -1,0 +1,29 @@
+{
+  "id": "k-humanizer",
+  "repository": "https://github.com/evergreentree97/K-Humanizer",
+  "commit": "61f0bb0632a75846b4cb37da19c55427bf8d6a8d",
+  "license": "MIT",
+  "sourcePath": "skills/k-humanizer/SKILL.md",
+  "files": {
+    "SKILL.md": {
+      "upstreamPath": "skills/k-humanizer/SKILL.md",
+      "blob": "1216915d9fa8eda93eade6339465c139be63441e",
+      "sha256": "92b6eef0c1cfa2bffa2d9fd9ad61e95537c0e81075ba6a4a5d50b45b291227dd"
+    },
+    "LICENSE": {
+      "upstreamPath": "LICENSE",
+      "blob": "114341196e46fd2bc5bfe921b0f084d7fa60a8b8",
+      "sha256": "12465aa7966cea6feaa788d3d9e703be5becf2ba4315692d5bbb6a7f39b38ff0"
+    },
+    "references/native-writing.md": {
+      "upstreamPath": "skills/k-humanizer/references/native-writing.md",
+      "blob": "c58e364cbdac90e274cf28703d7586d508f5d877",
+      "sha256": "944c53617f58a9d472ed9a1d3c8a42a3a5ee3838da4cfc4b1b1ca63c6701ec48"
+    },
+    "references/patterns.md": {
+      "upstreamPath": "skills/k-humanizer/references/patterns.md",
+      "blob": "38af3b0bd64693728f4e83d05bff80eeabc279c7",
+      "sha256": "8d6c010eda7c42f6c52d59df64c06053d4944f3a9c6276f0cacb292e162141f7"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "im-not-ai",
+  "repository": "https://github.com/epoko77-ai/im-not-ai",
+  "commit": "b37e0206d31fffd9149bf57168d4d62eb2086bee",
+  "license": "MIT",
+  "sourcePath": "codex/skills/humanize-korean/SKILL.md",
+  "files": {
+    "SKILL.md": {
+      "upstreamPath": "codex/skills/humanize-korean/SKILL.md",
+      "blob": "553dd8efcfd4e6a7e4a356d49b391972d81479b8",
+      "sha256": "bd3494baca18a1a911372a257a6c993b169b4b0bc51ec589f3a24912770caeab"
+    },
+    "LICENSE": {
+      "upstreamPath": "LICENSE",
+      "blob": "035888fab55c5418b718575a1bdde0da7a2ff306",
+      "sha256": "4cc7e8c439fe42f09d98457599c129ea6df9e5d0e622750d75952b441a38343f"
+    },
+    "references/quick-rules.md": {
+      "upstreamPath": "skills/humanize-korean/references/quick-rules.md",
+      "blob": "49a2d186f8eb7b4c08fec8c907a26bdd2a847a7b",
+      "sha256": "7a8e66c7b9326c1df7413f7a5662d69e89907591e16ba740e5746bf01f544b85"
+    }
+  }
+}
