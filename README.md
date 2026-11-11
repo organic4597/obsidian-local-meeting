@@ -134,4 +134,4 @@ P1 오류 수정, 반복 오인식 사전 후보와 종료 후 의심 구간 재
 
 현재 정식 릴리즈는 [0.13.0](https://github.com/organic4597/obsidian-local-meeting/releases/tag/v0.13.0)입니다. 배포 전 [안정성 검증과 한계](docs/audits/RELEASE-VALIDATION-0.13.0.ko.md)를 확인했습니다. 설치에는 worker와 macOS 도우미를 포함한 전체 ZIP을 사용하세요.
 
-AI 정리 스킬·회의 폴더 개발판(0.14.0-beta.4)은 네 개의 고정 지침을 개별 설정할 수 있습니다. [사용 방법과 적용 범위](docs/AI-SKILLS.ko.md), [원본과 MIT 고지](skills/README.ko.md)를 참고하세요.
+AI 정리 스킬·회의 폴더 개발판(0.14.0-beta.5)은 네 개의 고정 지침을 개별 설정할 수 있습니다. [사용 방법과 적용 범위](docs/AI-SKILLS.ko.md), [원본과 MIT 고지](skills/README.ko.md)를 참고하세요.

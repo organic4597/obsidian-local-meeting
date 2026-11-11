@@ -9,7 +9,7 @@ export class MeetingSetupModal extends Modal {
  private folderSuggest?:VaultFolderSuggest;
  constructor(app:App,private value:MeetingSetup,private options:AudioOption[],private audioAvailable:boolean,private done:(value:MeetingSetup|null)=>void){super(app);}
  onOpen(){this.setTitle('회의 시작');this.contentEl.createEl('p',{text:'회의 중 전사는 흐린 임시 텍스트로 보이며 자동 저장됩니다. 본문에는 자유롭게 필기하세요. 종료 후 화자별 대화를 확정하고 OpenAI 정리를 진행합니다.',cls:'lm-hint'});
- this.folderSuggest=addFolderInput(new Setting(this.contentEl).setName('회의록 기본 폴더').setDesc('목록에서 선택하거나 검색하세요. 새 경로도 입력할 수 있습니다. 예: 회의록/11-11-14/회의록.md.'),this.app,this.value.folder,v=>this.value.folder=v);
+ this.folderSuggest=addFolderInput(new Setting(this.contentEl).setName('회의록 기본 폴더').setDesc('현재 경로의 하위 폴더만 표시합니다. Tab으로 완성하거나 클릭해 내려가세요. 새 경로도 입력할 수 있습니다. 예: 회의록/11-11-14/회의록.md.'),this.app,this.value.folder,v=>this.value.folder=v);
  new Setting(this.contentEl).setName('말할 수 있는 최대 인원').setDesc('전체 참석 인원보다 실제 발언할 수 있는 인원을 기준으로 입력하세요. 0은 자동 추정입니다.').addText(t=>{t.inputEl.type='number';t.inputEl.min='0';t.inputEl.max='32';t.inputEl.step='1';t.setValue(String(this.value.count)).onChange(v=>{this.value.count=Number(v);});});
  new Setting(this.contentEl).setName('화자 수 적용 방식').addDropdown(d=>d.addOptions({maximum:'입력한 인원 이하에서 추정',exact:'정확히 이 인원으로 구분'}).setValue(this.value.mode).onChange(v=>{this.value.mode=v as ParticipantLimit['mode'];}));
  new Setting(this.contentEl).setName('실시간 잠정 화자 구분').setDesc('시험 기능입니다. 최근 24초를 4초 간격으로 분석하고 화자는 최근 5초를 보류하며 텍스트는 먼저 표시합니다. 오분류가 있을 수 있으며 종료 후 전체 녹음으로 재분석합니다.').addToggle(t=>t.setValue(this.value.liveSpeakers).onChange(v=>this.value.liveSpeakers=v));
