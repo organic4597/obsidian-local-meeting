@@ -64,7 +64,7 @@ npm run check
 
 Mac에서 빌드하면 EventKit 및 시스템 오디오 보조 실행 파일도 컴파일합니다. 시스템 오디오에는 macOS의 시스템 오디오·마이크 접근 허용이 필요합니다. `dist/` 내용 전체를 `<Vault>/.obsidian/plugins/local-meeting/`에 복사하고 커뮤니티 플러그인에서 Local Meeting을 활성화합니다.
 
-ASR Python에는 `worker/requirements.txt`, 별도 Community Python에는 `worker/requirements-community.txt`를 설치합니다. Community-1 모델 이용 조건에 동의하고 모델을 미리 내려받아야 합니다. 설정에 ASR Python·모델, Vault 외부 녹음 저장 폴더, Community 전용 Python·로컬 모델, 대사 정렬 모델 경로를 지정합니다. 회의 중에는 모델을 자동 다운로드하지 않습니다.
+개발 환경을 준비할 때 ASR Python에는 `worker/requirements.txt`, 별도 Community Python에는 `worker/requirements-community.txt`를 설치합니다. Community-1 모델 이용 조건에 동의하고 모델을 미리 내려받아야 합니다. 0.14.0-beta.4부터 설치된 실행환경·모델 경로는 자동 연결하며 일반 설정에 Python·모델 경로를 표시하지 않습니다. 유효한 기존 설정, 설치 정보, 이 Mac의 공용 연결 정보, 설치 폴더의 정해진 구조와 로컬 Community 모델 캐시를 사용합니다. 파일이 없는 새 Mac에 모델과 Python 패키지를 내려받아 설치하는 기능까지 포함한 것은 아닙니다. 처음에는 실행환경과 모델 준비가 필요하며 회의 중에는 자동 다운로드하지 않습니다. [자동 연결과 고급 문제 해결](docs/LOCAL-RUNTIME.ko.md)을 참고하세요.
 
 ### ASR 모델 준비
 
@@ -134,4 +134,4 @@ P1 오류 수정, 반복 오인식 사전 후보와 종료 후 의심 구간 재
 
 현재 정식 릴리즈는 [0.13.0](https://github.com/organic4597/obsidian-local-meeting/releases/tag/v0.13.0)입니다. 배포 전 [안정성 검증과 한계](docs/audits/RELEASE-VALIDATION-0.13.0.ko.md)를 확인했습니다. 설치에는 worker와 macOS 도우미를 포함한 전체 ZIP을 사용하세요.
 
-AI 정리 스킬·회의 폴더 개발판(0.14.0-beta.3)은 네 개의 고정 지침을 개별 설정할 수 있습니다. [사용 방법과 적용 범위](docs/AI-SKILLS.ko.md), [원본과 MIT 고지](skills/README.ko.md)를 참고하세요.
+AI 정리 스킬·회의 폴더 개발판(0.14.0-beta.4)은 네 개의 고정 지침을 개별 설정할 수 있습니다. [사용 방법과 적용 범위](docs/AI-SKILLS.ko.md), [원본과 MIT 고지](skills/README.ko.md)를 참고하세요.
