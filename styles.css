@@ -174,3 +174,7 @@
 .lm-stage-row .lm-hint { margin: 0; text-align: right; }
 .lm-stage-row .lm-stage-message { grid-column: 1 / -1; margin: 0; overflow-wrap: anywhere; color: var(--text-muted); }
 .lm-stage-row button { grid-column: 2; justify-self: end; }
+
+.lm-folder-input { width: min(320px, 40vw); }
+.lm-folder-suggestion { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .lm-folder-input { width: 100%; min-width: 120px; } }
