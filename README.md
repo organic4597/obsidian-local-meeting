@@ -138,4 +138,4 @@ AI 정리 스킬·회의 폴더 개발판(0.14.0-beta.7)은 네 개의 고정 �
 
 사전 목록 복창 방지와 고정 전사 패널 변경은 [0.14.0-beta.6 안내](docs/ASR-ECHO-FIX.ko.md)를 참고하세요.
 
-UI 구성 개편과 새 날짜 저장 규칙은 [0.15 UI/UX 사용 안내](docs/UX-OVERHAUL.ko.md)를 참고하세요. 현재 설치된 개발판은 0.15.0-beta.1입니다.
+UI 구성 개편과 새 날짜 저장 규칙은 [0.15 UI/UX 사용 안내](docs/UX-OVERHAUL.ko.md)를 참고하세요. 최신 정식 버전은 0.15.0입니다. [릴리즈](https://github.com/organic4597/obsidian-local-meeting/releases/tag/v0.15.0)에서 전체 설치 ZIP을 받을 수 있습니다.

@@ -1,6 +1,6 @@
 # 회의록 UI/UX 개편과 날짜별 저장
 
-버전: 0.15.0-beta.1 · 2026-11-13
+버전: 0.15.0 · 2026-11-13
 
 ## 새 회의의 저장 규칙
 
@@ -83,4 +83,4 @@ flowchart LR
   Review --> Dictionary[확인 후 로컬 사전]
 ```
 
-검증 범위와 각 버튼군의 확인 방법은 [검증 기록](ux-overhaul/VERIFICATION.ko.md)을 따른다. 정식 릴리즈는 별도로 발행하지 않은 개발판이다.
+검증 범위와 각 버튼군의 확인 방법은 [검증 기록](ux-overhaul/VERIFICATION.ko.md)을 따른다. 0.15.0은 최신 개발판의 변경을 통합한 정식 릴리즈다. 정식 승격 검사 범위는 docs/audits/RELEASE-VALIDATION-0.15.0.ko.md를 따른다.

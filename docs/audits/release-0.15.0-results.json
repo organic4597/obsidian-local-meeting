@@ -1,0 +1,55 @@
+{
+  "version": "0.15.0",
+  "date": "2026-11-13",
+  "testedCodeRevision": "ed3212ef67364e4c5db3f1a1591ec1c64d98c3ec",
+  "tests": {
+    "typescript": 172,
+    "python": 79,
+    "total": 251,
+    "failures": 0
+  },
+  "build": {
+    "typescript": true,
+    "bundle": true,
+    "platform": "macos-arm64",
+    "minMacOS": "15",
+    "minObsidian": "1.11.4"
+  },
+  "npmAudit": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "asrPythonPipCheck": "No broken requirements found.",
+  "astryxDoctor": {
+    "failures": 0,
+    "warnings": [
+      {
+        "id": "themes",
+        "message": "One theme check needs attention: theme-fonts."
+      },
+      {
+        "id": "theme-fonts",
+        "message": "External font imports prevent proof for neutral: Figtree."
+      }
+    ]
+  },
+  "nativeAudioCodesignVerified": true,
+  "audioPlayback": false,
+  "newMicrophoneRecording": false,
+  "newAIInference": false,
+  "calendarWrites": false,
+  "uiEvidence": "Prior same-code 0.15.0-beta.1 verification on Obsidian 1.15.1; see docs/ux-overhaul/VERIFICATION.ko.md",
+  "excludedFromPackage": [
+    "model weights",
+    "recordings",
+    "data.json",
+    "runtime credentials",
+    "tokens",
+    "source maps",
+    "Python environments"
+  ]
+}
