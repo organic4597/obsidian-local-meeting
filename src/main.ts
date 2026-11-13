@@ -545,12 +545,18 @@ export default class LocalMeeting extends Plugin {
   async updateReview(id:string,edited:ReviewItem['edited'],status:ReviewItem['status']){await this.reviews().update(id,item=>{if(item.calendar?.state==='saving')throw new Error('일정 저장이 진행 중입니다.');item.edited=edited;item.status=status;});}
   async saveTermCandidate(item:ReviewItem,canonical:string,scope:'meeting'|'project'|'vault'|'personal'){
     if(item.kind!=='term'||!canonical.trim())throw new Error('용어를 확인해 주세요.');
-    const dict=this.dictionary(),data=await dict.request({type:'list'}),scopeId=scope==='meeting'?this.meeting?.id:scope==='project'?this.settings.dictionaryProject:scope==='vault'?dict.vaultId:'shared';if(!scopeId)throw new Error('사전 적용 범위를 먼저 선택하세요.');
-    const termId='ai_'+item.id.replace(/-/g,'');const candidate=item.edited as import('./ai-summary').MeetingTerm;
-    const prior=data.terms.find(t=>t.canonical.normalize('NFC').toLocaleLowerCase()===canonical.trim().normalize('NFC').toLocaleLowerCase()&&t.scope.kind===scope&&t.scope.id===scopeId);
-    if(prior&&prior.id!==termId)throw new Error('같은 범위에 이미 있는 용어입니다. 회의 사전에서 확인해 주세요.');
-    if(!prior)await dict.request({type:'save',term:{id:termId,canonical,category:candidate.category,scope:{kind:scope,id:scopeId},pronunciations:[],observedErrors:[],contextTags:[],recognitionHint:true,postprocess:'hint',confirmedByUser:true,enabled:true}});
-    await this.reviews().update(item.id,i=>{i.edited={...candidate,canonicalCandidate:canonical.trim()};i.dictionaryTermId=termId;i.status='accepted';});await this.dictionaryChanged();
+    const store=this.reviews(),meetingId=this.meeting?.id,dict=this.dictionary(),project=this.settings.dictionaryProject;
+    const scopeId=scope==='meeting'?meetingId:scope==='project'?project:scope==='vault'?dict.vaultId:scope==='personal'?'shared':undefined;
+    if(!scopeId)throw new Error('사전 적용 범위를 먼저 선택하세요.');
+    const clean=canonical.normalize('NFC').trim(),candidate=item.edited as import('./ai-summary').MeetingTerm;
+    const data=await dict.request({type:'list'});
+    const prior=data.terms.find(t=>t.canonical.normalize('NFC').toLocaleLowerCase()===clean.toLocaleLowerCase()&&t.scope.kind===scope&&t.scope.id===scopeId);
+    const termId=prior?.id??'ai_'+createHash('sha256').update(JSON.stringify([scope,scopeId,clean.toLocaleLowerCase()])).digest('hex').slice(0,48);
+    if(!prior)await dict.request({type:'save',term:{id:termId,canonical:clean,category:candidate.category,scope:{kind:scope,id:scopeId},pronunciations:[],observedErrors:[],contextTags:[],recognitionHint:false,postprocess:'hint',confirmedByUser:true,enabled:true}});
+    await store.update(item.id,i=>{i.edited={...candidate,canonicalCandidate:clean};i.dictionaryTermId=termId;i.dictionaryScope={kind:scope,id:scopeId};i.dictionaryEnabled=prior?.enabled??true;i.status='accepted';});
+    // The dictionary write and receipt have succeeded even if propagation fails.
+    try{await this.dictionaryChanged();}catch{new Notice('사전에 저장됐습니다. 적용 상태 갱신은 회의 사전에서 다시 시도해 주세요.',10000);}
+
   }
   async addReviewedTask(item:ReviewItem){
     const meeting=this.meeting;if(!meeting||item.kind!=='task')throw new Error('회의와 할 일을 확인하세요.');const store=this.reviews();

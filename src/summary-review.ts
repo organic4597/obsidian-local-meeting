@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {EvidencePoint,MeetingEvent,MeetingTask,MeetingTerm,SummaryResult} from './ai-summary';
 export type ReviewKind='event'|'task'|'term'|'decision'|'question';
 export type ReviewValue=MeetingEvent|MeetingTask|MeetingTerm|EvidencePoint;
-export interface ReviewItem {id:string;sourceHash:string;model:string;kind:ReviewKind;original:ReviewValue;edited:ReviewValue;status:'pending'|'excluded'|'accepted';calendar?:{state:'saving'|'saved'|'unknown';uid:string;eventId?:string;calendarId?:string};noteWrite?:{state:'saving'|'saved'|'unknown';path:string};dictionaryTermId?:string;similarSaved?:boolean;}
+export interface ReviewItem {id:string;sourceHash:string;model:string;kind:ReviewKind;original:ReviewValue;edited:ReviewValue;status:'pending'|'excluded'|'accepted';calendar?:{state:'saving'|'saved'|'unknown';uid:string;eventId?:string;calendarId?:string};noteWrite?:{state:'saving'|'saved'|'unknown';path:string};dictionaryTermId?:string;dictionaryScope?:{kind:'meeting'|'project'|'vault'|'personal';id:string};dictionaryEnabled?:boolean;similarSaved?:boolean;}
 interface Data {schemaVersion:1;items:ReviewItem[];}
 /** Per-meeting store; each mutation is serialized and persisted before it is exposed. */
 export class SummaryReviewStore {
