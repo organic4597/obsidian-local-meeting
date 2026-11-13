@@ -190,3 +190,25 @@
 .lm-transcript-preview .lm-preview-text { height: 180px; max-height: 26vh; min-height: 80px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .lm-preview-follow { margin-left: auto; order: 2; font-size: var(--font-ui-smaller); }
 .lm-preview-follow[hidden] { display: none; }
+
+/* One quiet system for native host controls and Astryx navigation. */
+.lm-panel,.lm-quality-modal,.lm-settings-navigation { --lm-space: var(--size-4-2); --lm-radius: var(--radius-m); }
+.lm-navigation { padding-block: var(--size-4-2); position: sticky; top: 0; z-index: 3; background: var(--background-primary); }
+.lm-navigation-panel[hidden] { display: none !important; }
+.lm-navigation-panel { min-width: 0; padding-block: var(--size-4-3); }
+.lm-navigation-panel > button { width: 100%; justify-content: flex-start; text-align: start; min-height: var(--input-height); margin-block: var(--size-4-1); white-space: normal; height: auto; padding: var(--size-4-2) var(--size-4-3); }
+.lm-panel .lm-navigation-panel > details { border: 0; margin: 0; padding-block: var(--size-4-2); }
+.lm-panel .lm-primary-control { width: 100%; min-height: var(--input-height); white-space: normal; height: auto; }
+.lm-panel-heading h3 { font-size: var(--font-ui-medium); margin: 0; }
+.lm-panel .lm-recording-target { overflow-wrap: anywhere; font-size: var(--font-ui-smaller); }
+.lm-quality-modal .lm-navigation-panel.lm-review-group { margin: 0; border: 0; padding-inline: 0; }
+.lm-quality-modal .lm-event-candidate { gap: var(--size-4-2); padding-block: var(--size-4-3); }
+.lm-quality-modal .lm-event-candidate input,.lm-quality-modal .lm-event-candidate select { min-height: var(--input-height); }
+.lm-review-navigation { position: sticky; top: 0; z-index: 3; background: var(--background-primary); }
+.lm-astryx-root { font-family: var(--font-interface); color: var(--text-normal); min-width: 0; }
+.lm-astryx-root .astryx-tab-list { max-width: 100%; }
+.lm-settings-navigation + div:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { .lm-astryx-root * { animation-duration: 0s !important; transition-duration: 0s !important; } }
+
+.lm-navigation [role="tab"][aria-selected="true"] { color: var(--text-accent); font-weight: var(--font-semibold); box-shadow: inset 0 calc(-1 * var(--size-2-1)) 0 var(--interactive-accent); }
+.lm-navigation [role="tab"]:focus-visible { outline: var(--size-2-1) solid var(--interactive-accent); outline-offset: calc(-1 * var(--size-2-1)); }

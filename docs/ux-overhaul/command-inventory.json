@@ -1,0 +1,184 @@
+[
+  {
+    "id": "postprocess",
+    "label": "회의 처리 단계와 이어서 처리",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "session-locations",
+    "label": "회의 저장 위치 연결",
+    "sideEffects": "UI read; explicit follow-up action may write local metadata or diagnostics",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "pending-note-start",
+    "label": "미완료 회의록 준비 확인",
+    "sideEffects": "UI read; explicit follow-up action may write local metadata or diagnostics",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "toggle",
+    "label": "녹음 시작 / 중지",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "timed-notes",
+    "label": "필기 시점과 주변 발언 검토",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "confirm-preview",
+    "label": "임시 전사를 본문으로 확정",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "timestamps",
+    "label": "시간 표시 켜기 / 끄기",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "calendar",
+    "label": "연결된 캘린더 열기",
+    "sideEffects": "user-confirmed-write",
+    "status": "reviewed-in-source",
+    "liveTest": "동일 버튼의 월 이동·날짜 선택·연동 공휴일·새 일정 취소 확인"
+  },
+  {
+    "id": "task",
+    "label": "현재 노트에 할 일 추가",
+    "sideEffects": "user-confirmed-write",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "start",
+    "label": "새 회의록 만들고 녹음 시작",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "동일 버튼의 시작 창 열기·고급 옵션 접기·취소 확인; 녹음 시작은 미실행"
+  },
+  {
+    "id": "stop",
+    "label": "녹음 중지 및 남은 전사 처리",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "recordings",
+    "label": "현재 회의 녹음 파일 보기",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "number-unknown-speakers",
+    "label": "현재 회의의 미확정 음성 그룹에 화자 번호 표시",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "recover",
+    "label": "마지막 세션 복구 및 전사 재시도",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "test-audio",
+    "label": "테스트 WAV를 현재 노트에 전사",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "controls",
+    "label": "상세 보기 / 최소화",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "오버레이 메뉴→상세 보기 및 최소화 확인"
+  },
+  {
+    "id": "dictionary",
+    "label": "회의 사전 열기",
+    "sideEffects": "user-confirmed-write",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "voice-profiles",
+    "label": "화자 음성 프로필 관리",
+    "sideEffects": "user-confirmed-write",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "dictionary-toggle",
+    "label": "회의 사전 켜기 / 끄기",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "dictionary-selection",
+    "label": "선택한 표현을 사전에 추가",
+    "sideEffects": "user-confirmed-write",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "correction-candidates",
+    "label": "반복 오인식 사전 후보",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "retranscription-candidates",
+    "label": "종료 후 재전사 후보",
+    "sideEffects": "read-only",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "review",
+    "label": "확인 필요한 발언 검토",
+    "sideEffects": "user-confirmed-write",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "ai-summary",
+    "label": "OpenAI 요약·할 일·일정 정리",
+    "sideEffects": "external-inference-only-after-explicit-action",
+    "status": "reviewed-in-source",
+    "liveTest": "동일 버튼의 기존 검토 결과·탭 전환·임시 입력 보존 확인; 재생성 미실행"
+  },
+  {
+    "id": "refine-speakers",
+    "label": "현재 회의 종료 후 화자 재분석",
+    "sideEffects": "recording-or-processing",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  },
+  {
+    "id": "diagnostics",
+    "label": "현재 회의 진단 내보내기",
+    "sideEffects": "UI read; explicit follow-up action may write local metadata or diagnostics",
+    "status": "reviewed-in-source",
+    "liveTest": "실제 실행 미실행; 버튼군 검증 기록의 소스·자동 검사 범위 참조"
+  }
+]

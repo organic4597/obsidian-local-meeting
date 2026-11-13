@@ -1,6 +1,6 @@
 import {App,Modal,Notice,setTooltip} from 'obsidian';
 import {EditorView,ViewPlugin,Decoration,DecorationSet,WidgetType,ViewUpdate} from '@codemirror/view';
-import {StateEffect} from '@codemirror/state';
+import {StateEffect,Prec} from '@codemirror/state';
 import {SummaryAudioIndex,playbackRanges,PlaybackRange,recordingPath} from './summary-playback';
 import {audioRange} from './audio-review';
 import {timestamp} from './model';
@@ -12,7 +12,7 @@ export class SummaryAudio {
  readonly extension;private views=new Set<EditorView>();private roots=new Map<HTMLElement,string>();private player?:RangePlayer;private disposed=false;private playRequest=0;private linkEvents=new AbortController();private linkOwner=crypto.randomUUID();
  constructor(private app:App,readonly index:SummaryAudioIndex,private host:PlaybackHost){
   const owner=this;
-  this.extension=ViewPlugin.fromClass(class {
+  this.extension=Prec.highest(ViewPlugin.fromClass(class {
    decorations:DecorationSet;constructor(readonly view:EditorView){owner.views.add(view);this.decorations=this.build();}
    update(update:ViewUpdate){if(update.docChanged||update.viewportChanged||update.selectionSet||update.transactions.some(t=>t.effects.some(e=>e.is(refreshLinks))))this.decorations=this.build();}
    build(){const path=owner.host.fileOf(this.view),session=path?owner.index.session(path):undefined;if(!session)return Decoration.none;const ranges=[];const links=contentLinks(this.view.state.doc.toString());
@@ -21,7 +21,7 @@ export class SummaryAudio {
     return Decoration.set(ranges,true);
    }
    destroy(){owner.views.delete(this.view);}
-  },{decorations:plugin=>plugin.decorations});
+  },{decorations:plugin=>plugin.decorations}));
  }
  refresh(){if(this.disposed)return;for(const view of this.views)view.dispatch({effects:refreshLinks.of(null)});for(const [root,path] of this.roots){if(root.isConnected)this.decorate(root,path);else this.roots.delete(root);}}
  process(root:HTMLElement,path:string){this.roots.set(root,path);this.decorate(root,path);}

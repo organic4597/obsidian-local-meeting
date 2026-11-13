@@ -5,7 +5,7 @@ import {runInNewContext} from 'node:vm';
 import {createRequire} from 'node:module';
 import {join} from 'node:path';
 const requireFromRepo=createRequire(join(process.cwd(),'package.json'));
-const code=buildSync({entryPoints:['src/main.ts'],bundle:true,write:false,platform:'node',format:'cjs',external:['obsidian','electron','@codemirror/state','@codemirror/view']}).outputFiles![0]!.text;
+const code=buildSync({entryPoints:['src/main.ts'],bundle:true,write:false,loader:{'.css':'empty'},define:{'process.env.NODE_ENV':'"production"'},platform:'node',format:'cjs',external:['obsidian','electron','@codemirror/state','@codemirror/view']}).outputFiles![0]!.text;
 class Base {app:unknown;manifest={version:'test'};constructor(app:unknown){this.app=app;}}
 function setup(){
  const module:{exports:any}={exports:{}};

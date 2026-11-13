@@ -1,6 +1,6 @@
 {
   "name": "obsidian-local-meeting",
-  "version": "0.14.0-beta.7",
+  "version": "0.15.0-beta.1",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
@@ -9,15 +9,24 @@
     "test:worker": ".venv/bin/python -m unittest discover -s tests -p 'test_*.py'"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.7.15",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.13",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "esbuild": "^0.25.0",
     "obsidian": "1.14.4",
+    "postcss": "^8.5.32",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   },
   "dependencies": {
-    "jose": "^6.2.3"
+    "@astryxdesign/core": "^0.7.15",
+    "@astryxdesign/theme-neutral": "^0.7.15",
+    "@stylexjs/stylex": "^0.19.2",
+    "jose": "^6.2.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }
