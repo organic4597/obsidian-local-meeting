@@ -17,12 +17,11 @@ def run(root,args,emit,session=None,locked=False):
     def work(out,previous):
         nonlocal session
         if not ids:return {'items':{},'pending':[],'candidateFile':None}
-        from dictionary import context_text
         if session is None:
             with contextlib.redirect_stdout(sys.stderr):
                 from mlx_qwen3_asr import Session
                 session=Session(model=args.model)
-        context=context_text(cfg.get('dictionary',{}),session.tokenizer.encode)
+        context=''
         if previous:from quality import write_atomic;write_atomic(out/'retranscription.json',{k:v for k,v in previous.items() if k!='candidateFile'})
         remaining=[id for id in ids if not previous or id not in previous.get('items',{}) or id in previous.get('pending',[])]
         data=rescan(root,session,context,ids=remaining,output_root=out)

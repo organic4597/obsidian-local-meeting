@@ -27,7 +27,7 @@ export interface QualityHost {
 function field(container:HTMLElement,name:string){const label=container.createEl('label',{cls:'lm-form-field'});label.createSpan({text:name});return label;}
 function button(parent:HTMLElement,text:string,fn:()=>Promise<void>|void,cls=''){const b=parent.createEl('button',{text,cls,attr:{type:'button'}});b.addEventListener('click',()=>{if(b.disabled)return;b.disabled=true;Promise.resolve().then(fn).catch(e=>new Notice(String(e))).finally(()=>{b.disabled=false;});});return b;}
 const scopes={meeting:'불러온 회의',project:'선택한 프로젝트',vault:'현재 Vault',personal:'개인 기기'};
-const policies={hint:'인식 힌트만',normalize:'허용한 별칭 표기 통일',suggest:'교정 제안'};
+const policies={hint:'표기 보관 (자동 교정 안 함)',normalize:'허용한 별칭 표기 통일',suggest:'교정 제안'};
 
 export class DictionaryModal extends Modal {
  private generation=0;private query='';
@@ -53,7 +53,7 @@ export class DictionaryModal extends Modal {
   button(actions,'용어 추가',()=>new TermModal(this.app,this.host,data,undefined,()=>this.load()).open(),'mod-cta');
   const name=actions.createEl('input',{type:'text',attr:{placeholder:'새 프로젝트 이름','aria-label':'새 프로젝트 이름',maxlength:'80'}});
   button(actions,'프로젝트 추가',async()=>{await this.host.dictionary().request({type:'project',name:name.value});await this.load();});
-  const info=root.createEl('p',{cls:'lm-hint',text:`활성 용어 ${data.snapshot.terms.length}개 · 인식 힌트는 최대 40항목·256토큰입니다. 변경은 이후 발언부터 적용됩니다. 이름 사전은 목소리를 등록하지 않습니다.`});
+  const info=root.createEl('p',{cls:'lm-hint',text:`활성 용어 ${data.snapshot.terms.length}개 · 용어 목록의 전사 복창을 막기 위해 ASR 프롬프트 주입은 중지했습니다. 확인한 별칭의 표기 교정은 유지하며 이후 발언부터 적용됩니다. 이름 사전은 목소리를 등록하지 않습니다.`});
   if(data.snapshot.conflicts.length)info.setText(info.textContent+` 별칭 충돌 ${data.snapshot.conflicts.length}개는 자동 교정하지 않습니다.`);
   const search=field(root,'용어 검색').createEl('input',{type:'search',value:this.query});
   const list=root.createDiv({cls:'lm-quality-list'});
@@ -94,7 +94,7 @@ export class TermModal extends Modal {
   const category=field(root,'종류').createEl('select');for(const [value,text] of Object.entries({technical:'기술 용어',organization:'기관',product:'제품',person:'인명',abbreviation:'약어',other:'기타'}))category.createEl('option',{value,text});category.value=t?.category??'technical';
   const scope=field(root,'적용 범위').createEl('select');for(const [value,text] of Object.entries(scopes)){const o=scope.createEl('option',{value,text});o.disabled=(value==='meeting'&&!this.host.meeting)||(value==='project'&&!this.host.settings.dictionaryProject);}scope.value=t?.scope.kind??'vault';
   const policy=field(root,'적용 방법').createEl('select');for(const [value,text] of Object.entries(policies))policy.createEl('option',{value,text});policy.value=t?.postprocess??'hint';
-  const hint=field(root,'인식 전에 용어 힌트로 사용').createEl('input',{type:'checkbox'});hint.checked=t?.recognitionHint??true;
+  const hint=field(root,'인식 힌트 대상 (현재 프롬프트 주입 중지)').createEl('input',{type:'checkbox'});hint.checked=t?.recognitionHint??true;hint.disabled=true;
   root.createEl('p',{text:'오인식은 기본적으로 교정 후보입니다. 숫자·담당자·기한은 자동으로 추측하지 않습니다.',cls:'lm-hint'});
   const error=root.createDiv({cls:'lm-form-error',attr:{role:'alert'}}),actions=root.createDiv({cls:'lm-form-actions'});
   button(actions,'저장',async()=>{

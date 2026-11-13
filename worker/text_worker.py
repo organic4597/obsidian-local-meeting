@@ -4,7 +4,7 @@ from pathlib import Path
 from capture import Capture
 from endpoints import PauseHistory
 from quality import RevisionStore,write_atomic
-from dictionary import snapshot,validate_term,context_text,postprocess
+from dictionary import snapshot,validate_term,postprocess
 from store import Store
 
 def committed_cursor(saved,cursor):
@@ -14,7 +14,7 @@ def run(args,emit):
     root=Path(args.session).resolve();store=Store(root);store.recover();revisions=RevisionStore(store)
     config_path=root/'pipeline.json';config=json.loads(config_path.read_text())
     dictionary=config.get('dictionary',snapshot([]));dictionary=snapshot([validate_term(t) for t in dictionary.get('terms',[])],dictionary.get('project',''),root.name,dictionary.get('enabled',True))
-    config={**config,'workflow':'text-then-community','geometry':{'silenceSeconds':.9,'maxPhraseSeconds':20,'quietDbfs':-50},'asrModel':Path(args.model).name,'sourceHash':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()};write_atomic(config_path,config)
+    config={**config,'workflow':'text-then-community','geometry':{'silenceSeconds':.9,'maxPhraseSeconds':20,'quietDbfs':-50},'asrGuardVersion':1,'dictionaryPromptHints':False,'asrModel':Path(args.model).name,'sourceHash':hashlib.sha256(Path(__file__).read_bytes()).hexdigest()};write_atomic(config_path,config)
     if args.resume:
         from recording import ensure_recording
         ensure_recording(root)
@@ -71,7 +71,7 @@ def run(args,emit):
                 from mlx_qwen3_asr import Session
                 session=Session(model=str(Path(args.model).resolve()))
             from pcm import read_pcm,slice_recording
-            context=context_text(dictionary,session.tokenizer.encode)
+            context=''
             if streaming and not all(hasattr(session,k) for k in ('init_streaming','feed_audio','finish_streaming')):raise RuntimeError('설치된 STT 라이브러리에 스트리밍 API가 없습니다. 실행 환경을 업데이트해 주세요.')
             emit({'type':'ready','session':root.name})
             while True:
@@ -114,10 +114,13 @@ def run(args,emit):
                     if not closed and not streaming:break
                     if max(consumed,b)<=cursor+1e-6:break
                     if pending_dictionary and a>=pending_dictionary[1]-.01:
-                        dictionary=pending_dictionary[0];pending_dictionary=None;context=context_text(dictionary,session.tokenizer.encode);config['dictionary']=dictionary;write_atomic(config_path,config);write_atomic(root/'dictionary-snapshot.json',dictionary);emit({'type':'config_applied','session':root.name,'revision':dictionary['revision'],'afterSample':round(a*16000)})
+                        dictionary=pending_dictionary[0];pending_dictionary=None;context='';config['dictionary']=dictionary;write_atomic(config_path,config);write_atomic(root/'dictionary-snapshot.json',dictionary);emit({'type':'config_applied','session':root.name,'revision':dictionary['revision'],'afterSample':round(a*16000)})
                     if b-a>=.18:
                         began=time.monotonic()
                         try:
+                            from asr_guard import audible
+                            if phrase is None and not audible(slice_recording(root,rows,a,b)):
+                                cursor=max(consumed,b);revisions.set('cursor',cursor);did_work=True;continue
                             if streaming:
                                 from streaming_phrase import StreamingPhrase
                                 if phrase is None:phrase=StreamingPhrase(session,a,context)
@@ -132,12 +135,16 @@ def run(args,emit):
                                 pcm=slice_recording(root,rows,a,b)
                                 with contextlib.redirect_stdout(sys.stderr):result=session.transcribe((pcm,16000),language='Korean',context=context,max_new_tokens=min(512,max(24,math.ceil((b-a)*40))))
                                 raw=result.text.strip()
+                            from asr_guard import audible,hint_echo
+                            rejected='dictionary-echo' if hint_echo(raw,dictionary) else 'near-silence' if not audible(slice_recording(root,rows,a,b)) else ''
+                            suppressed=raw if rejected else ''
+                            if rejected:raw=''
                             text,changes=postprocess(raw,dictionary);times.append({'seconds':b-a,'processingSeconds':round(time.monotonic()-began,4),'provisional':not closed})
                             speaker='pending'
                             if live and turns:
                                 from live_speakers import speaker_at
                                 speaker=speaker_at(turns,round(a*1000),round(b*1000))
-                            s={'id':f'u_{round(a*16000):012d}','start':round(a*1000),'end':round(b*1000),'text':text,'rawText':raw,'speaker':speaker,'speakerState':'overlap' if speaker=='overlap' else 'unknown','reviewReasons':['실시간 잠정 화자 · 종료 후 재분석'] if live else [],'streamRewrites':phrase.rewrites if phrase else 0,'textState':'stable' if closed else 'provisional','dictionaryRevision':dictionary['revision'],'suggestions':changes}
+                            s={'id':f'u_{round(a*16000):012d}','start':round(a*1000),'end':round(b*1000),'text':text,'rawText':raw,'speaker':speaker,'speakerState':'overlap' if speaker=='overlap' else 'unknown','reviewReasons':['실시간 잠정 화자 · 종료 후 재분석'] if live else [],'asrSuppression':rejected,'suppressedRawText':suppressed,'streamRewrites':phrase.rewrites if phrase else 0,'textState':'stable' if closed else 'provisional','dictionaryRevision':dictionary['revision'],'suggestions':changes}
                             value=revisions.put(s)
                             if value:emit({'type':'segment','session':root.name,'segment':value})
                             if not closed:did_work=True;continue

@@ -2,6 +2,7 @@
 
 Git 커밋 및 검증 기록을 기준으로 소급 작성했습니다. [GitHub Releases](https://github.com/organic4597/obsidian-local-meeting/releases)에서도 같은 내용을 확인할 수 있습니다. 과거 개발판을 프리릴리스로 표시합니다. 0.11.0은 개발 브랜치의 변경사항입니다.
 
+- [v0.14.0-beta.6](v0.14.0-beta.6.md) — 사전 복창 방지와 고정 전사 패널
 - [v0.14.0-beta.5](v0.14.0-beta.5.md) — 경로 단계별 폴더 탐색과 Tab 완성
 - [v0.14.0-beta.4](v0.14.0-beta.4.md) — 로컬 엔진 자동 연결과 경로 설정 숨김
 - [v0.14.0-beta.3](v0.14.0-beta.3.md) — 저장 폴더 목록 선택·검색 자동완성

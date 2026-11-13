@@ -10,7 +10,7 @@ class FakeSession:
  def finish_streaming(self,state):state.text+='확정';return state
 class StreamingTests(unittest.TestCase):
  def test_partial_before_endpoint_reuses_context_and_rejects_audio_gaps(self):
-  session=FakeSession();p=StreamingPhrase(session,2.,'회의 용어');self.assertEqual(p.feed(np.zeros(16000),3.),'음성');self.assertEqual(p.feed(np.zeros(16000),4.),'음성 음성');self.assertEqual(session.options['context'],'회의 용어');self.assertEqual(p.finish(),'음성 음성 확정')
+  session=FakeSession();p=StreamingPhrase(session,2.,'회의 용어');self.assertEqual(p.feed(np.zeros(16000),3.),'음성');self.assertEqual(p.feed(np.zeros(16000),4.),'음성 음성');self.assertEqual(session.options['context'],'');self.assertEqual(p.finish(),'음성 음성 확정')
   with self.assertRaises(ValueError):p.feed(np.zeros(10),6.)
  def test_recovery_never_skips_provisional_audio(self):
   self.assertEqual(committed_cursor([{'end':9000,'textState':'provisional'},{'end':3000,'textState':'stable'}],3.),3.)
