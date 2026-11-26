@@ -3,7 +3,9 @@ import {mkdir,copyFile,rm,cp,readFile,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 if(process.platform==='darwin')execFileSync('sh',['scripts/build_native.sh'],{stdio:'inherit'});
 await mkdir('dist/worker',{recursive:true});
-await build({entryPoints:['src/main.ts'],bundle:true,external:['obsidian','electron','@codemirror/state','@codemirror/view'],platform:'node',format:'cjs',loader:{'.css':'empty'},define:{'process.env.NODE_ENV':'"production"'},target:'es2022',outfile:'dist/main.js',sourcemap:true});
+const notices=(await Promise.all(['LICENSE','third-party/ui/ASTRYX-LICENSE','third-party/ui/NEUTRAL-LICENSE','third-party/ui/REACT-LICENSE','third-party/ui/REACT-DOM-LICENSE','third-party/ui/SCHEDULER-LICENSE','third-party/ui/STYLEX-LICENSE'].map(p=>readFile(p,'utf8')))).join('\n\n');
+await build({banner:{js:'/*! Local Meeting and bundled UI licenses\n'+notices+'\n*/'},entryPoints:['src/main.ts'],bundle:true,external:['obsidian','electron','@codemirror/state','@codemirror/view'],platform:'node',format:'cjs',loader:{'.css':'empty'},define:{'process.env.NODE_ENV':'"production"'},target:'es2022',outfile:'dist/main.js',sourcemap:true});
+await writeFile('dist/support-version.json',JSON.stringify({version:JSON.parse(await readFile('manifest.json','utf8')).version})+'\n');
 for(const file of ['manifest.json','styles.css']) await copyFile(file,`dist/${file}`);
 for(const file of ['asr_guard.py','main.py','store.py','capture.py','system_capture.py','recording.py','pcm.py','legacy_recovery.py','dictionary.py','quality.py','endpoints.py','text_worker.py','community_pipeline.py','community_diarize.py','voice_features.py','live_speakers.py','streaming_phrase.py','worker_cleanup.py','stage_artifacts.py','postprocess_rescan.py','retranscribe.py','post_alignment.py','requirements-community.txt','requirements.txt']) await copyFile(`worker/${file}`,`dist/worker/${file}`);
 

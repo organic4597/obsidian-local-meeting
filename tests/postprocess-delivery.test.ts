@@ -3,7 +3,7 @@ import {buildSync} from 'esbuild';import {runInNewContext} from 'node:vm';import
 import {summaryInput} from '../src/ai-summary';
 const req=createRequire(join(process.cwd(),'package.json'));
 const code=buildSync({entryPoints:['src/main.ts'],bundle:true,write:false,loader:{'.css':'empty'},define:{'process.env.NODE_ENV':'"production"'},platform:'node',format:'cjs',external:['obsidian','electron','@codemirror/state','@codemirror/view']}).outputFiles![0]!.text;
-class Base {static acceptFolder:string|undefined;app:unknown;manifest={version:'test',dir:'plugin'};constructor(app:unknown){this.app=app;}open(){const self=this as any;if(Base.acceptFolder&&self.value?.audio&&self.done){self.done({...self.value,folder:Base.acceptFolder});return;}self.onClose?.();}}
+class Base {static acceptFolder:string|undefined;app:unknown;manifest={version:'0.16.0',dir:'plugin'};constructor(app:unknown){this.app=app;}open(){const self=this as any;if(Base.acceptFolder&&self.value?.audio&&self.done){self.done({...self.value,folder:Base.acceptFolder});return;}self.onClose?.();}}
 class File {extension='md';constructor(public path:string){}}
 class Folder {constructor(public path:string){}}
 function plugin(app:unknown){const module:{exports:any}={exports:{}};runInNewContext(code,{module,exports:module.exports,require:(id:string)=>id==='obsidian'?{AbstractInputSuggest:Base,Plugin:Base,PluginSettingTab:Base,ItemView:Base,Modal:Base,Notice:Base,TFile:File,TFolder:Folder,normalizePath:(s:string)=>s}:req(id),structuredClone,Buffer,TextEncoder,TextDecoder,URL,process,setTimeout,clearTimeout,window:{setTimeout,clearTimeout}});const p:any=new module.exports.default(app);p.refresh=()=>{};return p;}

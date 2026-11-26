@@ -2,6 +2,14 @@
 
 Apple Silicon Mac용 한국어 회의록 플러그인. 녹음·STT·화자 구분은 로컬에서 수행하고, 선택적으로 OpenAI에 회의 텍스트 정리를 요청합니다.
 
+## 설치·공개 배포
+
+[처음 설치하는 사용자 안내](docs/INSTALL.ko.md) · [개인정보·계정·네트워크·Vault 외부 접근](docs/PRIVACY.ko.md)
+
+현재는 GitHub Releases의 전체 설치 ZIP을 사용하며 **커뮤니티 디렉터리에는 아직 등록되지 않았습니다**. 실행은 Apple Silicon macOS 15+에서 지원합니다. 빌드된 파일을 사용하는 사용자에게 Node.js나 Swift 컴파일러는 필요하지 않지만 Python·모델 준비는 필요합니다. 새 사용자를 위한 엔진 설치 단순화와 스토어용 분리 배포는 개발 중입니다.
+
+프로젝트 코드는 [MIT](LICENSE)로 배포합니다. 포함한 AI 지침·UI 라이브러리의 원본 고지는 [skills](skills/README.ko.md)와 [third-party](third-party/README.md)를 따릅니다. 모델 가중치의 라이선스·다운로드 조건은 별개입니다.
+
 ## 현재 작동 흐름
 
 회의 중에는 로컬 Qwen STT를 고스트 텍스트로 보여주며 같은 노트에서 필기할 수 있습니다. 종료 후 Community-1/MPS와 단어 정렬로 화자를 구분해 본문을 확정하고, 선택적으로 OpenAI에 회의 텍스트를 보내 요약·할 일·일정과 용어 후보를 만듭니다. 기존 이름과 직접 수정한 내용을 보호합니다.
