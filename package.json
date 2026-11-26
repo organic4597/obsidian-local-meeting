@@ -1,25 +1,31 @@
 {
   "name": "obsidian-local-meeting",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && node esbuild.config.mjs",
     "test": "tsx --test tests/*.test.ts",
     "check": "npm run build && npm test && npm run test:worker",
-    "test:worker": ".venv/bin/python -m unittest discover -s tests -p 'test_*.py'"
+    "test:worker": ".venv/bin/python -m unittest discover -s tests -p 'test_*.py'",
+    "package:distribution": "python3 scripts/package_distribution.py --output dist/distribution",
+    "lint:community": "eslint ."
   },
   "devDependencies": {
     "@astryxdesign/cli": "^0.7.15",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.13",
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.6.0",
     "obsidian": "1.14.4",
     "postcss": "^8.5.32",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.74.0"
   },
   "dependencies": {
     "@astryxdesign/core": "^0.7.15",
@@ -28,5 +34,6 @@
     "jose": "^6.2.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
-  }
+  },
+  "license": "MIT"
 }

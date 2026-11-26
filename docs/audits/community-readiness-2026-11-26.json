@@ -1,0 +1,70 @@
+{
+  "date": "2026-11-26",
+  "version": "0.16.0",
+  "storeSubmitted": false,
+  "readyForSubmission": false,
+  "automatedTests": {
+    "typescript": 174,
+    "python": 80,
+    "total": 254
+  },
+  "eslintRecommended": {
+    "errors": 242,
+    "warnings": 47,
+    "rules": {
+      "@typescript-eslint/no-unsafe-member-access": 96,
+      "@typescript-eslint/no-explicit-any": 5,
+      "@typescript-eslint/no-unsafe-assignment": 48,
+      "@typescript-eslint/no-unsafe-argument": 12,
+      "no-useless-escape": 3,
+      "@typescript-eslint/no-unnecessary-type-assertion": 22,
+      "obsidianmd/prefer-window-timers": 16,
+      "@typescript-eslint/no-unsafe-call": 13,
+      "obsidianmd/prefer-active-doc": 9,
+      "@typescript-eslint/no-unsafe-return": 6,
+      "@typescript-eslint/no-this-alias": 2,
+      "no-empty": 13,
+      "@typescript-eslint/no-unused-vars": 8,
+      "obsidianmd/commands/no-default-hotkeys": 4,
+      "obsidianmd/no-misused-promises": 1,
+      "@typescript-eslint/no-floating-promises": 4,
+      "@typescript-eslint/no-base-to-string": 7,
+      "@typescript-eslint/restrict-template-expressions": 6,
+      "@typescript-eslint/restrict-plus-operands": 1,
+      "obsidianmd/settings-tab/prefer-setting-definitions": 1,
+      "obsidianmd/settings-tab/no-manual-html-headings": 1,
+      "obsidianmd/hardcoded-config-path": 1,
+      "no-control-regex": 2,
+      "obsidianmd/no-static-styles-assignment": 2,
+      "@typescript-eslint/only-throw-error": 1,
+      "no-cond-assign": 1,
+      "obsidianmd/prefer-create-el": 3,
+      "no-regex-spaces": 1
+    }
+  },
+  "npmAuditAllDependencies": {
+    "info": 0,
+    "low": 0,
+    "moderate": 4,
+    "high": 0,
+    "critical": 0,
+    "total": 4
+  },
+  "astryxDoctorFailures": [],
+  "packageChecks": [
+    "exactly three community files",
+    "separate native/worker package",
+    "checksums and executable mode",
+    "installer dry-run",
+    "tampered support file rejected",
+    "private state and model weights excluded"
+  ],
+  "remaining": [
+    "resolve lint findings",
+    "resolve development-tool audit warnings",
+    "fresh Mac runtime/model onboarding and native signing review",
+    "public OpenAI account/auth support verification",
+    "owner Community account/GitHub link",
+    "publish matching semver tag and required individual assets then submit for review"
+  ]
+}
